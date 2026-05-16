@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 # Resolve the MVP root from this file so the scripts can be run from anywhere.
-MVP_ROOT = Path(__file__).resolve().parent.parent
+MVP_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = MVP_ROOT / "raw"
 PROCESSED_DIR = MVP_ROOT / "processed"
 RUNS_DIR = MVP_ROOT / "runs"
@@ -28,6 +28,7 @@ POSE_DUPLICATES_CSV = PROCESSED_DIR / "pose_duplicate_keys.csv"
 LIGAND_CLUSTER_MANIFEST_CSV = PROCESSED_DIR / "ligand_cluster_manifest.csv"
 SPLIT_MANIFEST_CSV = PROCESSED_DIR / "split_manifest.csv"
 SPLIT_CONFLICT_GRAPH_CACHE_PKL = PROCESSED_DIR / "split_conflict_graph.pkl"
+SPLIT_MANIFEST_REPORT_TXT = PROCESSED_DIR / "split_manifest_report.txt"
 AFFINITY_SPLIT_MANIFEST_CSV = PROCESSED_DIR / "affinity_split_manifest.csv"
 
 
@@ -39,6 +40,10 @@ RAW_BINDING_REQUIRED_COLUMNS = (
     "pIC50",
 )
 
+SPLIT_MANIFEST_COLUMNS = (
+    "ligand",
+    "split",
+)
 
 AFFINITY_MANIFEST_COLUMNS = (
     "uniprot_id",
