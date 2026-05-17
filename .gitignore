@@ -1,8 +1,9 @@
+.DS_Store
+__pycache__/
+*.pyc
 raw/
 runs/
 processed/
 grids/
 archive/
-.DS_Store
-__pycache__/
-*.pyc
+tests/
