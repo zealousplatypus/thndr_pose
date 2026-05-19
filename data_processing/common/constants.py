@@ -59,6 +59,7 @@ PDB_MANIFEST_COLUMNS = (
 
 POSE_MANIFEST_COLUMNS = (
     "pose_id",
+    "pose_hash",
     "pdb_key",
     "ligand",
     "grid",
@@ -78,5 +79,6 @@ DEFAULT_SPLIT_SEED = 7
 DEFAULT_TRAIN_FRACTION = 0.98
 DEFAULT_VAL_FRACTION = 0.01
 DEFAULT_TEST_FRACTION = 0.01
+MIN_LIGANDS_FOR_REQUIRED_VAL_TEST = 100
 ACTIVE_SPLIT_NAMES = ("train", "val", "test")
 ALL_SPLIT_NAMES = ACTIVE_SPLIT_NAMES + ("dropped",)

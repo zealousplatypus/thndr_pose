@@ -30,6 +30,7 @@ from ..common.constants import (
     DEFAULT_TEST_FRACTION,
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_VAL_FRACTION,
+    MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
     SPLIT_CONFLICT_GRAPH_CACHE_PKL,
     SPLIT_MANIFEST_CSV,
     SPLIT_MANIFEST_REPORT_TXT,
@@ -40,6 +41,7 @@ from ..common.manifest_io import assert_unique, ensure_parent_dir, read_csv_chec
 LOGGER = logging.getLogger(__name__)
 DEFAULT_NUM_RESTARTS = 3
 CONFLICT_GRAPH_CACHE_VERSION = 1
+PerProteinStats = dict[str, dict[str, int | float]]
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,9 @@ class RestartResult:
     seed: int
     assignments: dict[str, str]
     splits: dict[str, set[str]]
+    ligand_proteins: dict[str, set[str]]
+    protein_ligands: dict[str, set[str]]
+    target_fractions: dict[str, float]
 
     @property
     def test_size(self) -> int:
@@ -72,24 +77,45 @@ class RestartResult:
         return self.train_size + self.val_size + self.test_size
 
     @property
-    def score(self) -> tuple[int, int, int, int, int]:
+    def per_protein_balance_penalty(self) -> float:
+        return _per_protein_balance_penalty(
+            protein_ligands=self.protein_ligands,
+            assignments=self.assignments,
+            target_fractions=self.target_fractions,
+        )
+
+    @property
+    def score(self) -> tuple[int, int, int, int, int, int]:
         # Held-out size matters most; retained examples matter after that.
         return (
             self.test_size,
             self.val_size,
             self.train_size,
             self.kept_size,
+            -int(round(self.per_protein_balance_penalty * 1_000_000)),
             -self.restart_index,
         )
 
 
-def _read_ligands(affinity_csv: str | Path) -> list[str]:
-    """Read unique ligand SMILES from an affinity manifest."""
-    affinity_df = read_csv_checked(affinity_csv, ["ligand"])
-    ligands = sorted(affinity_df["ligand"].dropna().drop_duplicates().astype(str).tolist())
+def _read_ligand_proteins(
+    affinity_csv: str | Path,
+) -> tuple[list[str], dict[str, set[str]], dict[str, set[str]]]:
+    """Read unique ligands and their protein memberships from an affinity manifest."""
+    affinity_df = read_csv_checked(affinity_csv, ["ligand", "uniprot_id"])
+    affinity_df = affinity_df.dropna(subset=["ligand", "uniprot_id"])
+    affinity_df["ligand"] = affinity_df["ligand"].astype(str)
+    affinity_df["uniprot_id"] = affinity_df["uniprot_id"].astype(str)
+
+    ligand_proteins: dict[str, set[str]] = {}
+    protein_ligands: dict[str, set[str]] = {}
+    for ligand, uniprot_id in affinity_df[["ligand", "uniprot_id"]].itertuples(index=False):
+        ligand_proteins.setdefault(ligand, set()).add(uniprot_id)
+        protein_ligands.setdefault(uniprot_id, set()).add(ligand)
+
+    ligands = sorted(ligand_proteins)
     if not ligands:
         raise ValueError("Affinity manifest contains no ligands to split.")
-    return ligands
+    return ligands, ligand_proteins, protein_ligands
 
 
 def _build_fingerprints(
@@ -253,6 +279,24 @@ def _validate_fractions(
         )
 
 
+def _compute_target_fractions(
+    train_fraction: float,
+    val_fraction: float,
+    test_fraction: float,
+) -> dict[str, float]:
+    """Return desired active split fractions."""
+    _validate_fractions(
+        train_fraction=train_fraction,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
+    )
+    return {
+        "train": train_fraction,
+        "val": val_fraction,
+        "test": test_fraction,
+    }
+
+
 def _compute_target_counts(
     total_ligands: int,
     train_fraction: float,
@@ -303,11 +347,68 @@ def _can_join_split(
     return conflict_graph[ligand].isdisjoint(blockers)
 
 
+def _init_protein_counts(protein_ligands: dict[str, set[str]]) -> dict[str, dict[str, int]]:
+    """Initialize per-protein split counters to zero."""
+    return {
+        protein: {split_name: 0 for split_name in ALL_SPLIT_NAMES}
+        for protein in protein_ligands
+    }
+
+
+def _split_balance_score(current_fraction: float, target_fraction: float) -> float:
+    """Score how much a protein needs more ligands in a split (lower is better)."""
+    if current_fraction < target_fraction:
+        return target_fraction - current_fraction
+    # Penalize overfilled splits so underfilled val/test buckets are preferred.
+    return (current_fraction - target_fraction) + 1.0
+
+
+def _pick_balanced_split(
+    ligand: str,
+    candidate_splits: list[str],
+    ligand_proteins: dict[str, set[str]],
+    protein_counts: dict[str, dict[str, int]],
+    protein_ligands: dict[str, set[str]],
+    target_fractions: dict[str, float],
+) -> str:
+    """Pick the candidate split that best improves per-protein balance."""
+    affected_proteins = ligand_proteins.get(ligand, set())
+    best_split = candidate_splits[0]
+    best_score = float("inf")
+    for split_name in candidate_splits:
+        balance_score = 0.0
+        for protein in affected_proteins:
+            total = len(protein_ligands[protein])
+            if total == 0:
+                continue
+            current_fraction = protein_counts[protein][split_name] / total
+            target_fraction = target_fractions[split_name]
+            balance_score += _split_balance_score(current_fraction, target_fraction)
+        if balance_score < best_score or (balance_score == best_score and split_name < best_split):
+            best_score = balance_score
+            best_split = split_name
+    return best_split
+
+
+def _update_protein_counts(
+    ligand: str,
+    split_name: str,
+    ligand_proteins: dict[str, set[str]],
+    protein_counts: dict[str, dict[str, int]],
+) -> None:
+    """Increment per-protein counters after assigning a ligand."""
+    for protein in ligand_proteins.get(ligand, set()):
+        protein_counts[protein][split_name] += 1
+
+
 def _assign_split_from_order(
     ordered_ligands: list[str],
     conflict_graph: dict[str, set[str]],
     target_counts: dict[str, int],
     forbidden_test_ligands: set[str],
+    ligand_proteins: dict[str, set[str]],
+    protein_ligands: dict[str, set[str]],
+    target_fractions: dict[str, float],
 ) -> dict[str, set[str]]:
     """Greedily assign ligands to active splits, then drop leftovers."""
     splits = {
@@ -316,20 +417,88 @@ def _assign_split_from_order(
         "test": set(),
         "dropped": set(),
     }
+    protein_counts = _init_protein_counts(protein_ligands)
 
     for ligand in ordered_ligands:
+        candidate_splits: list[str] = []
         for split_name in ("test", "val", "train"):
             if split_name == "test" and ligand in forbidden_test_ligands:
                 continue
             if len(splits[split_name]) >= target_counts[split_name]:
                 continue
             if _can_join_split(ligand, split_name, splits, conflict_graph):
-                splits[split_name].add(ligand)
-                break
+                candidate_splits.append(split_name)
+
+        if candidate_splits:
+            split_name = _pick_balanced_split(
+                ligand=ligand,
+                candidate_splits=candidate_splits,
+                ligand_proteins=ligand_proteins,
+                protein_counts=protein_counts,
+                protein_ligands=protein_ligands,
+                target_fractions=target_fractions,
+            )
+            splits[split_name].add(ligand)
+            _update_protein_counts(
+                ligand=ligand,
+                split_name=split_name,
+                ligand_proteins=ligand_proteins,
+                protein_counts=protein_counts,
+            )
         else:
             splits["dropped"].add(ligand)
+            _update_protein_counts(
+                ligand=ligand,
+                split_name="dropped",
+                ligand_proteins=ligand_proteins,
+                protein_counts=protein_counts,
+            )
 
     return splits
+
+
+def _per_protein_balance_penalty(
+    protein_ligands: dict[str, set[str]],
+    assignments: dict[str, str],
+    target_fractions: dict[str, float],
+) -> float:
+    """Return the sum of absolute fraction deviations across proteins and splits."""
+    penalty = 0.0
+    for protein, ligands in protein_ligands.items():
+        total = len(ligands)
+        if total == 0:
+            continue
+        for split_name in ACTIVE_SPLIT_NAMES:
+            count = sum(1 for ligand in ligands if assignments.get(ligand) == split_name)
+            actual_fraction = count / total
+            penalty += abs(actual_fraction - target_fractions[split_name])
+    return penalty
+
+
+def _compute_per_protein_stats(
+    protein_ligands: dict[str, set[str]],
+    assignments: dict[str, str],
+) -> dict[str, PerProteinStats]:
+    """Compute train/val/test/dropped ligand counts and percentages per protein."""
+    stats: dict[str, PerProteinStats] = {}
+    for protein in sorted(protein_ligands):
+        ligands = protein_ligands[protein]
+        total = len(ligands)
+        counts = {
+            split_name: sum(1 for ligand in ligands if assignments.get(ligand) == split_name)
+            for split_name in ALL_SPLIT_NAMES
+        }
+        stats[protein] = {
+            "total": total,
+            "train": counts["train"],
+            "val": counts["val"],
+            "test": counts["test"],
+            "dropped": counts["dropped"],
+            "train_pct": 100.0 * counts["train"] / total if total else 0.0,
+            "val_pct": 100.0 * counts["val"] / total if total else 0.0,
+            "test_pct": 100.0 * counts["test"] / total if total else 0.0,
+        }
+    return stats
 
 
 def _make_restart_result(
@@ -339,6 +508,9 @@ def _make_restart_result(
     forbidden_test_ligands: set[str],
     seed: int,
     restart_index: int,
+    ligand_proteins: dict[str, set[str]],
+    protein_ligands: dict[str, set[str]],
+    target_fractions: dict[str, float],
 ) -> RestartResult:
     """Run one randomized restart and capture the resulting split assignment."""
     restart_seed = seed + restart_index
@@ -349,6 +521,9 @@ def _make_restart_result(
         conflict_graph=conflict_graph,
         target_counts=target_counts,
         forbidden_test_ligands=forbidden_test_ligands,
+        ligand_proteins=ligand_proteins,
+        protein_ligands=protein_ligands,
+        target_fractions=target_fractions,
     )
     assignments = {
         ligand: split_name
@@ -360,6 +535,9 @@ def _make_restart_result(
         seed=restart_seed,
         assignments=assignments,
         splits=splits,
+        ligand_proteins=ligand_proteins,
+        protein_ligands=protein_ligands,
+        target_fractions=target_fractions,
     )
 
 
@@ -394,12 +572,62 @@ def _validate_result(
                     )
 
 
+def _validate_per_protein_balance(
+    protein_ligands: dict[str, set[str]],
+    assignments: dict[str, str],
+    target_fractions: dict[str, float],
+    min_ligands_for_required_val_test: int = MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
+) -> None:
+    """Ensure large proteins retain val/test coverage; warn for smaller proteins."""
+    per_protein_stats = _compute_per_protein_stats(protein_ligands, assignments)
+    worst_deviation = 0.0
+    worst_protein = ""
+    for protein, stats in per_protein_stats.items():
+        total = int(stats["total"])
+        val_count = int(stats["val"])
+        test_count = int(stats["test"])
+        kept = total - int(stats["dropped"])
+
+        for split_name in ACTIVE_SPLIT_NAMES:
+            actual_fraction = int(stats[split_name]) / total if total else 0.0
+            deviation = abs(actual_fraction - target_fractions[split_name])
+            if deviation > worst_deviation:
+                worst_deviation = deviation
+                worst_protein = protein
+
+        if kept < min_ligands_for_required_val_test:
+            if val_count == 0 or test_count == 0:
+                LOGGER.warning(
+                    "Protein %s has only %d kept ligands and is missing val=%d or test=%d",
+                    protein,
+                    kept,
+                    val_count,
+                    test_count,
+                )
+            continue
+
+        if val_count == 0 or test_count == 0:
+            raise ValueError(
+                f"Protein {protein} has {kept} kept ligands but is missing "
+                f"val={val_count} or test={test_count} ligands"
+            )
+
+    LOGGER.info(
+        "Worst per-protein fraction deviation: protein=%s, deviation=%.4f",
+        worst_protein,
+        worst_deviation,
+    )
+
+
 def _make_restart_results(
     ligands: list[str],
     conflict_graph: dict[str, set[str]],
     target_counts: dict[str, int],
     seed: int,
     num_restarts: int,
+    ligand_proteins: dict[str, set[str]],
+    protein_ligands: dict[str, set[str]],
+    target_fractions: dict[str, float],
 ) -> list[RestartResult]:
     """Build restart candidates while keeping their test sets non-overlapping."""
     restart_results = []
@@ -412,13 +640,16 @@ def _make_restart_results(
             forbidden_test_ligands=previously_tested_ligands,
             seed=seed,
             restart_index=restart_index,
+            ligand_proteins=ligand_proteins,
+            protein_ligands=protein_ligands,
+            target_fractions=target_fractions,
         )
         restart_results.append(result)
         previously_tested_ligands.update(result.splits["test"])
         LOGGER.info(
             (
                 "Restart %d (seed=%d): train=%d, val=%d, test=%d, "
-                "dropped=%d, forbidden_test_for_next=%d"
+                "dropped=%d, forbidden_test_for_next=%d, balance_penalty=%.4f"
             ),
             result.restart_index,
             result.seed,
@@ -427,8 +658,38 @@ def _make_restart_results(
             result.test_size,
             result.dropped_size,
             len(previously_tested_ligands),
+            result.per_protein_balance_penalty,
         )
     return restart_results
+
+
+def _format_per_protein_report_lines(
+    per_protein_stats: dict[str, PerProteinStats],
+) -> list[str]:
+    """Format per-protein split counts for the text report."""
+    lines = [
+        "per_protein_ligand_splits:",
+        (
+            "Percentages are computed over total ligands per uniprot_id "
+            "(including dropped ligands)."
+        ),
+        (
+            f"{'uniprot_id':<12} {'total':>6} {'train':>6} {'val':>6} "
+            f"{'test':>6} {'dropped':>8} {'train_pct':>10} {'val_pct':>9} {'test_pct':>10}"
+        ),
+    ]
+    for protein, stats in sorted(per_protein_stats.items()):
+        lines.append(
+            (
+                f"{protein:<12} {int(stats['total']):>6} "
+                f"{int(stats['train']):>6} {int(stats['val']):>6} "
+                f"{int(stats['test']):>6} {int(stats['dropped']):>8} "
+                f"{float(stats['train_pct']):>9.1f}% "
+                f"{float(stats['val_pct']):>8.1f}% "
+                f"{float(stats['test_pct']):>9.1f}%"
+            )
+        )
+    return lines
 
 
 def _write_split_manifest_report(
@@ -438,6 +699,7 @@ def _write_split_manifest_report(
     restart_results: list[RestartResult],
     best_result: RestartResult,
     total_conflicts: int,
+    per_protein_stats: dict[str, PerProteinStats],
 ) -> Path | None:
     """Write a small text report summarizing restart split sizes."""
     if report_txt is None:
@@ -457,6 +719,7 @@ def _write_split_manifest_report(
         ),
         f"winning_restart: {best_result.restart_index}",
         f"winning_seed: {best_result.seed}",
+        f"winning_balance_penalty: {best_result.per_protein_balance_penalty:.6f}",
         "",
         "restart_results:",
     ]
@@ -467,9 +730,14 @@ def _write_split_manifest_report(
                 f"- restart={result.restart_index}, seed={result.seed}, "
                 f"train={result.train_size}, val={result.val_size}, "
                 f"test={result.test_size}, dropped={result.dropped_size}, "
-                f"kept={result.kept_size}{winner_suffix}"
+                f"kept={result.kept_size}, "
+                f"balance_penalty={result.per_protein_balance_penalty:.6f}"
+                f"{winner_suffix}"
             )
         )
+
+    lines.append("")
+    lines.extend(_format_per_protein_report_lines(per_protein_stats))
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     LOGGER.info("Wrote split manifest report: %s", report_path)
@@ -488,18 +756,24 @@ def build_split_manifest(
     test_fraction: float = DEFAULT_TEST_FRACTION,
     conflict_graph_cache: str | Path | None = SPLIT_CONFLICT_GRAPH_CACHE_PKL,
     report_txt: str | Path | None = SPLIT_MANIFEST_REPORT_TXT,
+    min_ligands_for_required_val_test: int = MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
 ) -> pd.DataFrame:
     """Build `split_manifest.csv` from unique ligands in `affinity_manifest.csv`."""
     if num_restarts <= 0:
         raise ValueError(f"num_restarts must be positive; got {num_restarts}")
 
-    ligands = _read_ligands(affinity_csv)
+    ligands, ligand_proteins, protein_ligands = _read_ligand_proteins(affinity_csv)
     conflict_graph = _get_conflict_graph(
         ligands=ligands,
         tanimoto_threshold=tanimoto_threshold,
         radius=radius,
         fp_size=fp_size,
         cache_path=conflict_graph_cache,
+    )
+    target_fractions = _compute_target_fractions(
+        train_fraction=train_fraction,
+        val_fraction=val_fraction,
+        test_fraction=test_fraction,
     )
     target_counts = _compute_target_counts(
         total_ligands=len(ligands),
@@ -514,9 +788,18 @@ def build_split_manifest(
         target_counts=target_counts,
         seed=seed,
         num_restarts=num_restarts,
+        ligand_proteins=ligand_proteins,
+        protein_ligands=protein_ligands,
+        target_fractions=target_fractions,
     )
     best_result = max(restart_results, key=lambda result: result.score)
     _validate_result(ligands=ligands, conflict_graph=conflict_graph, result=best_result)
+    _validate_per_protein_balance(
+        protein_ligands=protein_ligands,
+        assignments=best_result.assignments,
+        target_fractions=target_fractions,
+        min_ligands_for_required_val_test=min_ligands_for_required_val_test,
+    )
 
     split_df = pd.DataFrame(
         [
@@ -530,11 +813,16 @@ def build_split_manifest(
     assert_unique(split_df, ["ligand"], "split_manifest")
 
     total_conflicts = sum(len(neighbors) for neighbors in conflict_graph.values()) // 2
+    per_protein_stats = _compute_per_protein_stats(
+        protein_ligands=protein_ligands,
+        assignments=best_result.assignments,
+    )
     LOGGER.info(
         (
             "Winning split: total=%d, targets(train=%d,val=%d,test=%d), "
             "actual(train=%d,val=%d,test=%d,dropped=%d), "
-            "base_seed=%d, winning_restart=%d, winning_seed=%d, conflicts=%d"
+            "base_seed=%d, winning_restart=%d, winning_seed=%d, conflicts=%d, "
+            "balance_penalty=%.6f"
         ),
         len(ligands),
         target_counts["train"],
@@ -548,10 +836,21 @@ def build_split_manifest(
         best_result.restart_index,
         best_result.seed,
         total_conflicts,
+        best_result.per_protein_balance_penalty,
     )
     for split_name in ("train", "val", "test", "dropped"):
         split_count = len(best_result.splits[split_name])
         LOGGER.info("%s: %d ligands (%.3f)", split_name, split_count, split_count / len(ligands))
+    for protein, stats in sorted(per_protein_stats.items()):
+        LOGGER.info(
+            "Protein %s: total=%d, train=%d, val=%d, test=%d, dropped=%d",
+            protein,
+            int(stats["total"]),
+            int(stats["train"]),
+            int(stats["val"]),
+            int(stats["test"]),
+            int(stats["dropped"]),
+        )
 
     _write_split_manifest_report(
         report_txt=report_txt,
@@ -560,6 +859,7 @@ def build_split_manifest(
         restart_results=restart_results,
         best_result=best_result,
         total_conflicts=total_conflicts,
+        per_protein_stats=per_protein_stats,
     )
 
     return split_df
