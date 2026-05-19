@@ -27,6 +27,7 @@ POSE_LMDB_DIR = PROCESSED_DIR / "pose_lmdb"
 POSE_DUPLICATES_CSV = PROCESSED_DIR / "pose_duplicate_keys.csv"
 LIGAND_CLUSTER_MANIFEST_CSV = PROCESSED_DIR / "ligand_cluster_manifest.csv"
 SPLIT_MANIFEST_CSV = PROCESSED_DIR / "split_manifest.csv"
+PROTEIN_MANIFEST_CSV = PROCESSED_DIR / "protein_manifest.csv"
 SPLIT_CONFLICT_GRAPH_CACHE_PKL = PROCESSED_DIR / "split_conflict_graph.pkl"
 SPLIT_MANIFEST_REPORT_TXT = PROCESSED_DIR / "split_manifest_report.txt"
 AFFINITY_SPLIT_MANIFEST_CSV = PROCESSED_DIR / "affinity_split_manifest.csv"
@@ -42,13 +43,28 @@ RAW_BINDING_REQUIRED_COLUMNS = (
 
 SPLIT_MANIFEST_COLUMNS = (
     "ligand",
+    "ligand_idx",
     "split",
+)
+
+PROTEIN_MANIFEST_COLUMNS = (
+    "uniprot_id",
+    "protein_idx",
 )
 
 AFFINITY_MANIFEST_COLUMNS = (
     "uniprot_id",
     "ligand",
     "affinity",
+)
+
+AFFINITY_SPLIT_MANIFEST_COLUMNS = (
+    "uniprot_id",
+    "protein_idx",
+    "ligand",
+    "ligand_idx",
+    "affinity",
+    "split",
 )
 
 PDB_MANIFEST_COLUMNS = (

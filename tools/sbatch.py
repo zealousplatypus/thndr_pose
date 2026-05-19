@@ -100,7 +100,7 @@ def main(
     # Now make all the commands we'll be running into a list of strings
     task_commands = []
     for _, row in jobs_df.iterrows():
-        command = " ".join(row.to_list())
+        command = " ".join(str(part) for part in row.to_list())
         task_commands.append(command)
 
     # If we run directly on this node (num_jobs == 0), we just go for it

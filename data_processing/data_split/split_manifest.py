@@ -31,6 +31,7 @@ from ..common.constants import (
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_VAL_FRACTION,
     MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
+    PROTEIN_MANIFEST_CSV,
     SPLIT_CONFLICT_GRAPH_CACHE_PKL,
     SPLIT_MANIFEST_CSV,
     SPLIT_MANIFEST_REPORT_TXT,
@@ -116,6 +117,52 @@ def _read_ligand_proteins(
     if not ligands:
         raise ValueError("Affinity manifest contains no ligands to split.")
     return ligands, ligand_proteins, protein_ligands
+
+
+def _build_ligand_index_map(ligands: list[str]) -> dict[str, int]:
+    """Return a stable ligand string -> contiguous integer index map."""
+    return {ligand: index for index, ligand in enumerate(ligands)}
+
+
+def _build_protein_index_map(protein_ligands: dict[str, set[str]]) -> dict[str, int]:
+    """Return a stable uniprot_id -> contiguous integer index map."""
+    proteins = sorted(protein_ligands)
+    return {protein: index for index, protein in enumerate(proteins)}
+
+
+def _build_split_manifest_df(
+    ligands: list[str],
+    assignments: dict[str, str],
+) -> pd.DataFrame:
+    """Build the ligand-level split manifest with contiguous ligand indices."""
+    ligand_to_idx = _build_ligand_index_map(ligands)
+    split_df = pd.DataFrame(
+        [
+            {
+                "ligand": ligand,
+                "ligand_idx": ligand_to_idx[ligand],
+                "split": assignments[ligand],
+            }
+            for ligand in ligands
+        ]
+    ).sort_values(["split", "ligand_idx", "ligand"], ignore_index=True)
+    assert_unique(split_df, ["ligand"], "split_manifest")
+    assert_unique(split_df, ["ligand_idx"], "split_manifest ligand_idx")
+    return split_df
+
+
+def _build_protein_manifest_df(protein_ligands: dict[str, set[str]]) -> pd.DataFrame:
+    """Build the protein index manifest for embedding lookup tables."""
+    proteins = sorted(protein_ligands)
+    protein_df = pd.DataFrame(
+        {
+            "uniprot_id": proteins,
+            "protein_idx": list(range(len(proteins))),
+        }
+    )
+    assert_unique(protein_df, ["uniprot_id"], "protein_manifest")
+    assert_unique(protein_df, ["protein_idx"], "protein_manifest protein_idx")
+    return protein_df
 
 
 def _build_fingerprints(
@@ -757,8 +804,8 @@ def build_split_manifest(
     conflict_graph_cache: str | Path | None = SPLIT_CONFLICT_GRAPH_CACHE_PKL,
     report_txt: str | Path | None = SPLIT_MANIFEST_REPORT_TXT,
     min_ligands_for_required_val_test: int = MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
-) -> pd.DataFrame:
-    """Build `split_manifest.csv` from unique ligands in `affinity_manifest.csv`."""
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build split and protein manifests from unique ligands in `affinity_manifest.csv`."""
     if num_restarts <= 0:
         raise ValueError(f"num_restarts must be positive; got {num_restarts}")
 
@@ -801,16 +848,8 @@ def build_split_manifest(
         min_ligands_for_required_val_test=min_ligands_for_required_val_test,
     )
 
-    split_df = pd.DataFrame(
-        [
-            {
-                "ligand": ligand,
-                "split": best_result.assignments[ligand],
-            }
-            for ligand in ligands
-        ]
-    ).sort_values(["split", "ligand"], ignore_index=True)
-    assert_unique(split_df, ["ligand"], "split_manifest")
+    split_df = _build_split_manifest_df(ligands=ligands, assignments=best_result.assignments)
+    protein_df = _build_protein_manifest_df(protein_ligands=protein_ligands)
 
     total_conflicts = sum(len(neighbors) for neighbors in conflict_graph.values()) // 2
     per_protein_stats = _compute_per_protein_stats(
@@ -862,7 +901,7 @@ def build_split_manifest(
         per_protein_stats=per_protein_stats,
     )
 
-    return split_df
+    return split_df, protein_df
 
 
 def parse_args() -> argparse.Namespace:
@@ -937,6 +976,11 @@ def parse_args() -> argparse.Namespace:
         help="Output path for split_manifest.csv.",
     )
     parser.add_argument(
+        "--protein-output-csv",
+        default=str(PROTEIN_MANIFEST_CSV),
+        help="Output path for protein_manifest.csv.",
+    )
+    parser.add_argument(
         "--report-txt",
         default=str(SPLIT_MANIFEST_REPORT_TXT),
         help="Output path for the restart report text file.",
@@ -948,7 +992,7 @@ def main() -> None:
     """CLI entrypoint."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = parse_args()
-    split_df = build_split_manifest(
+    split_df, protein_df = build_split_manifest(
         affinity_csv=args.affinity_csv,
         tanimoto_threshold=args.tanimoto_threshold,
         radius=args.radius,
@@ -962,7 +1006,9 @@ def main() -> None:
         report_txt=args.report_txt,
     )
     output_path = write_manifest(split_df, args.output_csv)
+    protein_output_path = write_manifest(protein_df, args.protein_output_csv)
     LOGGER.info("Wrote split manifest: %s (%d rows)", output_path, len(split_df))
+    LOGGER.info("Wrote protein manifest: %s (%d rows)", protein_output_path, len(protein_df))
 
 
 if __name__ == "__main__":
