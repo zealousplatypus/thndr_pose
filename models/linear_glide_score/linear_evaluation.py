@@ -26,7 +26,6 @@ import pandas as pd
 from data_processing.common.constants import (
     ACTIVE_SPLIT_NAMES,
     AFFINITY_SPLIT_MANIFEST_CSV,
-    POSE_MANIFEST_COLUMNS,
     POSE_MANIFEST_CSV,
     RUNS_DIR,
 )
@@ -48,7 +47,7 @@ DEFAULT_OUTPUT_DIR = RUNS_DIR / "linear_glide_score"
 
 def _minimum_glide_scores(pose_csv: str | Path) -> pd.DataFrame:
     """Return one minimum Glide score per ligand."""
-    pose_df = read_csv_checked(pose_csv, POSE_MANIFEST_COLUMNS)
+    pose_df = read_csv_checked(pose_csv, ["ligand", "glide_score"])
     pose_df = pose_df[["ligand", "glide_score"]].copy()
     pose_df["glide_score"] = pd.to_numeric(pose_df["glide_score"], errors="coerce")
     pose_df = pose_df.dropna(subset=["ligand", "glide_score"])
