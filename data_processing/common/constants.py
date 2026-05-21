@@ -31,6 +31,9 @@ PROTEIN_MANIFEST_CSV = PROCESSED_DIR / "protein_manifest.csv"
 SPLIT_CONFLICT_GRAPH_CACHE_PKL = PROCESSED_DIR / "split_conflict_graph.pkl"
 SPLIT_MANIFEST_REPORT_TXT = PROCESSED_DIR / "split_manifest_report.txt"
 AFFINITY_SPLIT_MANIFEST_CSV = PROCESSED_DIR / "affinity_split_manifest.csv"
+CHEMPROP_EMBEDDINGS_NPY = PROCESSED_DIR / "chemprop_embeddings.float32.npy"
+CHEMPROP_SMILES_BY_IDX_JSON = PROCESSED_DIR / "chemprop_smiles_by_idx.json"
+CHEMPROP_EMBEDDINGS_METADATA_JSON = PROCESSED_DIR / "chemprop_embeddings_metadata.json"
 
 
 # Default columns in the raw binding CSV.
