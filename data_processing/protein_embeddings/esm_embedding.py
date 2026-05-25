@@ -178,7 +178,21 @@ def build_esm_embeddings(
             if not isinstance(token_embeddings, torch.Tensor):
                 token_embeddings = torch.tensor(token_embeddings)
 
-            # Mean pool residue embeddings into one protein embedding.
+            # ESMC may return either:
+            #   (seq_len, hidden_dim)
+            # or
+            #   (1, seq_len, hidden_dim)
+            if token_embeddings.ndim == 3:
+                token_embeddings = token_embeddings.squeeze(0)
+
+            if token_embeddings.ndim != 2:
+                raise ValueError(
+                    f"Expected ESMC embeddings to have shape "
+                    f"(seq_len, hidden_dim) or (1, seq_len, hidden_dim), "
+                    f"got {tuple(token_embeddings.shape)}"
+                )
+
+            # Mean pool across residues/tokens.
             pooled = token_embeddings.mean(dim=0)
 
             pooled_np = (
