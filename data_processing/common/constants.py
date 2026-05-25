@@ -28,12 +28,14 @@ POSE_DUPLICATES_CSV = PROCESSED_DIR / "pose_duplicate_keys.csv"
 LIGAND_CLUSTER_MANIFEST_CSV = PROCESSED_DIR / "ligand_cluster_manifest.csv"
 SPLIT_MANIFEST_CSV = PROCESSED_DIR / "split_manifest.csv"
 PROTEIN_MANIFEST_CSV = PROCESSED_DIR / "protein_manifest.csv"
+PROTEIN_SEQUENCE_MANIFEST_CSV = PROCESSED_DIR / "protein_sequence_manifest.csv"
 SPLIT_CONFLICT_GRAPH_CACHE_PKL = PROCESSED_DIR / "split_conflict_graph.pkl"
 SPLIT_MANIFEST_REPORT_TXT = PROCESSED_DIR / "split_manifest_report.txt"
 AFFINITY_SPLIT_MANIFEST_CSV = PROCESSED_DIR / "affinity_split_manifest.csv"
 CHEMPROP_EMBEDDINGS_NPY = PROCESSED_DIR / "chemprop_embeddings.float32.npy"
 CHEMPROP_SMILES_BY_IDX_JSON = PROCESSED_DIR / "chemprop_smiles_by_idx.json"
 CHEMPROP_EMBEDDINGS_METADATA_JSON = PROCESSED_DIR / "chemprop_embeddings_metadata.json"
+ESM_EMBEDDINGS_NPY = PROCESSED_DIR / "esm_embeddings.float32.npy"
 
 
 # Default columns in the raw binding CSV.
@@ -53,6 +55,11 @@ SPLIT_MANIFEST_COLUMNS = (
 PROTEIN_MANIFEST_COLUMNS = (
     "uniprot_id",
     "protein_idx",
+)
+
+PROTEIN_SEQUENCE_MANIFEST_COLUMNS = (
+    "protein_idx",
+    "sequence",
 )
 
 AFFINITY_MANIFEST_COLUMNS = (
@@ -101,3 +108,10 @@ DEFAULT_TEST_FRACTION = 0.01
 MIN_LIGANDS_FOR_REQUIRED_VAL_TEST = 100
 ACTIVE_SPLIT_NAMES = ("train", "val", "test")
 ALL_SPLIT_NAMES = ACTIVE_SPLIT_NAMES + ("dropped",)
+
+# Default protein embedding parameters.
+DEFAULT_ESM_MODEL_NAME = "esm2_t33_650M_UR50D"
+DEFAULT_ESM_REPR_LAYER = 33
+DEFAULT_ESM_BATCH_SIZE = 4
+DEFAULT_ESM_DTYPE = "float32"
+DEFAULT_ESM_TRUNCATE_TO = 1022
