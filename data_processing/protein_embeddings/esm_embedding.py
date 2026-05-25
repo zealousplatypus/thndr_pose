@@ -1,293 +1,313 @@
 #!/usr/bin/env python3
-"""Build indexed frozen ESM protein embeddings as a dense .npy matrix.
+"""Build a baseline ESMC embedding matrix from a CSV of protein sequences.
 
-Rows in the output matrix correspond exactly to `protein_idx` values in the manifest:
+The input CSV must contain:
+    - protein_idx: integer row index in the output matrix
+    - sequence: protein sequence
 
-    embedding_matrix[i] == mean-pooled ESM embedding for the sequence
-                           whose protein_idx is i
-
-This is intended for downstream model training where the protein sequence
-manifest already contains a stable integer `protein_idx` column.
+The script enforces that protein_idx values are exactly 0..N-1, so:
+    embeddings[i] == ESMC embedding for the CSV row whose protein_idx == i
 
 Example:
-    python -m data_processing.protein_embeddings.esm_embedding
-
-Downstream loading:
-    import numpy as np
-    embs = np.load("processed/esm_embeddings.float32.npy", mmap_mode="r")
-    protein_emb = embs[protein_idx]
+    python -m data_processing.protein_embeddings.esm_embedding \
+        --input processed/protein_sequence_manifest.csv \
+        --output processed/esmc_embeddings.float32.npy
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import pandas as pd
 import torch
 
-if __package__ in {None, ""}:  # pragma: no cover - direct script execution
-    candidates = [
-        Path.cwd(),
-        *Path.cwd().parents,
-        Path(__file__).resolve().parent,
-        *Path(__file__).resolve().parents,
-    ]
-    for candidate in candidates:
-        if (candidate / "data_processing" / "common" / "constants.py").exists():
-            sys.path.append(str(candidate))
-            break
+from esm.models.esmc import ESMC
+from esm.sdk.api import ESMProtein, LogitsConfig
 
-from data_processing.common.constants import (
+from ..common.constants import (
     DEFAULT_ESM_BATCH_SIZE,
     DEFAULT_ESM_DTYPE,
     DEFAULT_ESM_MODEL_NAME,
-    DEFAULT_ESM_REPR_LAYER,
     DEFAULT_ESM_TRUNCATE_TO,
     ESM_EMBEDDINGS_NPY,
     PROTEIN_SEQUENCE_MANIFEST_COLUMNS,
     PROTEIN_SEQUENCE_MANIFEST_CSV,
 )
-from data_processing.common.manifest_io import ensure_parent_dir, read_csv_checked
+from ..common.manifest_io import ensure_parent_dir, read_csv_checked
 
 
 LOGGER = logging.getLogger(__name__)
+
 DEFAULT_IDX_COLUMN = PROTEIN_SEQUENCE_MANIFEST_COLUMNS[0]
 DEFAULT_SEQUENCE_COLUMN = PROTEIN_SEQUENCE_MANIFEST_COLUMNS[1]
 
 
-def validate_sequence_manifest(
-    df: pd.DataFrame,
-    sequence_column: str = DEFAULT_SEQUENCE_COLUMN,
-    idx_column: str = DEFAULT_IDX_COLUMN,
-) -> pd.DataFrame:
-    """Return validated protein rows sorted by `protein_idx`."""
-    slim = df[[idx_column, sequence_column]].copy()
-    slim = slim.dropna(subset=[idx_column, sequence_column])
-    slim[sequence_column] = slim[sequence_column].astype(str).str.strip()
-    slim = slim[slim[sequence_column] != ""]
+def read_sequence_csv(path: str | Path) -> pd.DataFrame:
+    """Read sequences and return rows sorted by protein_idx."""
+    df = read_csv_checked(path, PROTEIN_SEQUENCE_MANIFEST_COLUMNS)
+    df = df.loc[:, PROTEIN_SEQUENCE_MANIFEST_COLUMNS].copy()
 
-    if slim.empty:
-        raise ValueError("No valid protein rows found after dropping empty sequences/indices.")
+    if df.isna().any().any():
+        raise ValueError("protein_idx and sequence columns cannot contain missing values")
 
-    idx_numeric = pd.to_numeric(slim[idx_column], errors="raise")
-    if not np.all(np.equal(idx_numeric, np.floor(idx_numeric))):
-        bad = slim.loc[~np.equal(idx_numeric, np.floor(idx_numeric)), idx_column].head().tolist()
-        raise ValueError(f"Non-integer protein_idx values found, examples: {bad}")
-    slim[idx_column] = idx_numeric.astype(int)
+    protein_idx = pd.to_numeric(df[DEFAULT_IDX_COLUMN], errors="raise")
 
-    if (slim[idx_column] < 0).any():
-        bad = slim.loc[slim[idx_column] < 0, idx_column].head().tolist()
-        raise ValueError(f"Negative protein_idx values found, examples: {bad}")
+    if not np.array_equal(protein_idx, protein_idx.astype(int)):
+        raise ValueError("protein_idx values must be integers")
 
-    n_sequences_per_idx = slim.groupby(idx_column)[sequence_column].nunique(dropna=True)
-    bad_idx = n_sequences_per_idx[n_sequences_per_idx > 1]
-    if not bad_idx.empty:
-        examples = bad_idx.head(10).index.tolist()
-        raise ValueError(f"Some protein_idx values map to multiple sequences, examples: {examples}")
-
-    return (
-        slim.drop_duplicates(subset=[idx_column])
-        .sort_values(idx_column)
-        .reset_index(drop=True)
+    df[DEFAULT_IDX_COLUMN] = protein_idx.astype(int)
+    df[DEFAULT_SEQUENCE_COLUMN] = (
+        df[DEFAULT_SEQUENCE_COLUMN]
+        .astype(str)
+        .str.strip()
     )
 
+    if df[DEFAULT_SEQUENCE_COLUMN].eq("").any():
+        raise ValueError("sequence column contains empty strings")
 
-def load_esm_model(model_name: str):
-    """Load an ESM model by name from the fair-esm package."""
-    try:
-        import esm
-    except ImportError as exc:
-        raise ImportError(
-            "Missing dependency `esm`. Install with: pip install fair-esm"
-        ) from exc
+    if df[DEFAULT_IDX_COLUMN].duplicated().any():
+        raise ValueError("protein_idx values must be unique")
 
-    if not hasattr(esm.pretrained, model_name):
-        available = sorted(name for name in dir(esm.pretrained) if name.startswith("esm"))
+    df = df.sort_values(DEFAULT_IDX_COLUMN, ignore_index=True)
+
+    expected_idx = np.arange(len(df))
+
+    if not np.array_equal(
+        df[DEFAULT_IDX_COLUMN].to_numpy(),
+        expected_idx,
+    ):
         raise ValueError(
-            f"Unknown ESM model {model_name!r}. Available pretrained functions include: {available}"
+            "protein_idx must be contiguous and zero-based: 0..N-1"
         )
 
-    loader: Callable = getattr(esm.pretrained, model_name)
-    model, alphabet = loader()
-    return model, alphabet
+    return df
+
+
+def load_esmc_model(model_name: str, device: str) -> ESMC:
+    """Load an ESMC model by name."""
+    model = ESMC.from_pretrained(model_name)
+    model = model.to(device)
+    model.eval()
+    return model
 
 
 def normalize_sequence(sequence: str) -> str:
-    """Normalize sequence characters for ESM."""
+    """Normalize sequence characters for ESMC."""
     sequence = str(sequence).strip().upper()
-    # ESM handles standard amino acids well. Map rare/ambiguous characters to X.
+
+    # Map ambiguous/rare residues to X.
     valid = set("ACDEFGHIKLMNPQRSTVWYX")
-    return "".join(char if char in valid else "X" for char in sequence)
+
+    return "".join(
+        char if char in valid else "X"
+        for char in sequence
+    )
 
 
 def build_esm_embeddings(
-    manifest: str | Path = PROTEIN_SEQUENCE_MANIFEST_CSV,
-    embeddings_out: str | Path = ESM_EMBEDDINGS_NPY,
-    sequence_column: str = DEFAULT_SEQUENCE_COLUMN,
-    idx_column: str = DEFAULT_IDX_COLUMN,
+    input_csv: str | Path = PROTEIN_SEQUENCE_MANIFEST_CSV,
+    output_npy: str | Path = ESM_EMBEDDINGS_NPY,
     model_name: str = DEFAULT_ESM_MODEL_NAME,
-    repr_layer: int = DEFAULT_ESM_REPR_LAYER,
     batch_size: int = DEFAULT_ESM_BATCH_SIZE,
     device: str | None = None,
     dtype: str = DEFAULT_ESM_DTYPE,
     truncate_to: int | None = DEFAULT_ESM_TRUNCATE_TO,
 ) -> np.ndarray:
-    """Generate mean-pooled ESM embeddings indexed by protein_idx."""
-    manifest = Path(manifest)
-    embeddings_out = Path(embeddings_out)
+    """Generate mean-pooled ESMC embeddings indexed by protein_idx."""
 
-    df = read_csv_checked(manifest, [idx_column, sequence_column])
-    df = validate_sequence_manifest(
-        df,
-        sequence_column=sequence_column,
-        idx_column=idx_column,
+    # NOTE:
+    # ESMC SDK currently does not expose the same efficient
+    # batched tokenization API as old ESM2, so this implementation
+    # processes proteins sequentially for simplicity and correctness.
+
+    df = read_sequence_csv(input_csv)
+
+    df[DEFAULT_SEQUENCE_COLUMN] = (
+        df[DEFAULT_SEQUENCE_COLUMN]
+        .map(normalize_sequence)
     )
-    df[sequence_column] = df[sequence_column].map(normalize_sequence)
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model, alphabet = load_esm_model(model_name)
-    model.eval().to(device)
-    batch_converter = alphabet.get_batch_converter()
+    model = load_esmc_model(model_name, device)
 
-    max_idx = int(df[idx_column].max())
-    embedding_dim = int(model.embed_dim)
-    embeddings = np.full((max_idx + 1, embedding_dim), np.nan, dtype=np.dtype(dtype))
+    embeddings: np.ndarray | None = None
 
-    rows = list(df[[idx_column, sequence_column]].itertuples(index=False, name=None))
+    rows = list(
+        df[
+            [DEFAULT_IDX_COLUMN, DEFAULT_SEQUENCE_COLUMN]
+        ].itertuples(index=False, name=None)
+    )
 
     with torch.no_grad():
-        for start in range(0, len(rows), batch_size):
-            batch_rows = rows[start : start + batch_size]
-            labels: list[str] = []
-            sequences: list[str] = []
-            lengths: list[int] = []
-            protein_indices: list[int] = []
 
-            for protein_idx_raw, sequence_raw in batch_rows:
-                protein_idx = int(protein_idx_raw)
-                sequence = str(sequence_raw)
-                if truncate_to is not None and len(sequence) > truncate_to:
-                    LOGGER.warning(
-                        "Truncating protein_idx=%d from length %d to %d residues",
-                        protein_idx,
-                        len(sequence),
-                        truncate_to,
-                    )
-                    sequence = sequence[:truncate_to]
+        for row_idx, (protein_idx_raw, sequence_raw) in enumerate(rows):
 
-                labels.append(str(protein_idx))
-                sequences.append(sequence)
-                lengths.append(len(sequence))
-                protein_indices.append(protein_idx)
+            protein_idx = int(protein_idx_raw)
 
-            _, _, tokens = batch_converter(list(zip(labels, sequences)))
-            tokens = tokens.to(device)
+            sequence = str(sequence_raw)
 
-            results = model(tokens, repr_layers=[repr_layer], return_contacts=False)
-            token_representations = results["representations"][repr_layer]
+            if truncate_to is not None and len(sequence) > truncate_to:
+                LOGGER.warning(
+                    "Truncating protein_idx=%d from length %d to %d residues",
+                    protein_idx,
+                    len(sequence),
+                    truncate_to,
+                )
 
-            for batch_idx, protein_idx in enumerate(protein_indices):
-                seq_len = lengths[batch_idx]
-                # Skip BOS token at 0 and EOS token after sequence.
-                pooled = token_representations[batch_idx, 1 : seq_len + 1].mean(dim=0)
-                embeddings[protein_idx] = pooled.detach().cpu().numpy().astype(dtype, copy=False)
+                sequence = sequence[:truncate_to]
 
-            LOGGER.info("Embedded %d/%d proteins", min(start + batch_size, len(rows)), len(rows))
+            protein = ESMProtein(sequence=sequence)
 
-    missing = np.isnan(embeddings).all(axis=1)
-    if missing.any():
-        missing_indices = np.where(missing)[0].tolist()
-        LOGGER.warning(
-            "Output contains all-NaN rows for missing protein_idx values: %s",
-            missing_indices[:20],
-        )
+            protein_tensor = model.encode(protein)
 
-    np.save(ensure_parent_dir(embeddings_out), embeddings)
-    LOGGER.info("Wrote embeddings with shape %s to %s", embeddings.shape, embeddings_out)
+            output = model.logits(
+                protein_tensor,
+                LogitsConfig(
+                    sequence=True,
+                    return_embeddings=True,
+                ),
+            )
+
+            token_embeddings = output.embeddings
+
+            if not isinstance(token_embeddings, torch.Tensor):
+                token_embeddings = torch.tensor(token_embeddings)
+
+            # Mean pool residue embeddings into one protein embedding.
+            pooled = token_embeddings.mean(dim=0)
+
+            pooled_np = (
+                pooled.detach()
+                .cpu()
+                .numpy()
+                .astype(dtype, copy=False)
+            )
+
+            # Lazy initialize embedding matrix once embedding_dim is known.
+            if embeddings is None:
+
+                embedding_dim = int(pooled_np.shape[0])
+
+                embeddings = np.empty(
+                    (len(df), embedding_dim),
+                    dtype=np.dtype(dtype),
+                )
+
+            embeddings[protein_idx] = pooled_np
+
+            LOGGER.info(
+                "Embedded %d/%d proteins",
+                row_idx + 1,
+                len(rows),
+            )
+
+    assert embeddings is not None
+
+    output_npy = ensure_parent_dir(output_npy)
+
+    np.save(output_npy, embeddings)
+
+    LOGGER.info(
+        "Wrote embeddings with shape %s to %s",
+        embeddings.shape,
+        output_npy,
+    )
+
     return embeddings
 
 
 def parse_args() -> argparse.Namespace:
-    """CLI for generating frozen ESM embeddings."""
+    """CLI for generating frozen ESMC embeddings."""
+
     parser = argparse.ArgumentParser(
-        description="Generate frozen ESM protein embeddings as an indexed .npy matrix."
+        description=(
+            "Generate frozen ESMC protein embeddings "
+            "as an indexed .npy matrix."
+        )
     )
+
     parser.add_argument(
-        "--manifest",
         "--input",
-        dest="manifest",
         type=Path,
         default=PROTEIN_SEQUENCE_MANIFEST_CSV,
         help="CSV manifest containing protein_idx and sequence columns.",
     )
+
     parser.add_argument(
-        "--sequence-column",
-        default=DEFAULT_SEQUENCE_COLUMN,
-        help=f"Column containing protein sequences. Default: {DEFAULT_SEQUENCE_COLUMN}",
-    )
-    parser.add_argument(
-        "--idx-column",
-        default=DEFAULT_IDX_COLUMN,
-        help=f"Column containing integer protein indices. Default: {DEFAULT_IDX_COLUMN}",
-    )
-    parser.add_argument(
-        "--embeddings-out",
         "--output",
-        dest="embeddings_out",
         type=Path,
         default=ESM_EMBEDDINGS_NPY,
         help="Output dense embedding matrix path.",
     )
+
     parser.add_argument(
         "--model",
         default=DEFAULT_ESM_MODEL_NAME,
-        help="ESM pretrained model loader name.",
+        help="ESMC pretrained model name.",
     )
+
     parser.add_argument(
-        "--repr-layer",
+        "--batch-size",
         type=int,
-        default=DEFAULT_ESM_REPR_LAYER,
-        help="ESM representation layer.",
+        default=DEFAULT_ESM_BATCH_SIZE,
+        help="Unused currently; reserved for future batching support.",
     )
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_ESM_BATCH_SIZE)
-    parser.add_argument("--device", default=None, help="cuda, cpu, or omit for auto")
+
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="cuda, cpu, or omit for auto",
+    )
+
     parser.add_argument(
         "--dtype",
         choices=("float16", "float32", "float64"),
         default=DEFAULT_ESM_DTYPE,
     )
+
     parser.add_argument(
         "--truncate-to",
         type=int,
         default=DEFAULT_ESM_TRUNCATE_TO,
-        help="Max residues per sequence for ESM-2 positional limit; use 0 to disable",
+        help=(
+            "Maximum residues per sequence; "
+            "use 0 to disable truncation."
+        ),
     )
-    parser.add_argument("--log-level", default="INFO", help="Python logging level")
+
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Python logging level",
+    )
+
     return parser.parse_args()
 
 
 def main() -> None:
     """CLI entrypoint."""
+
     args = parse_args()
+
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
         format="%(levelname)s: %(message)s",
     )
-    truncate_to = None if args.truncate_to == 0 else args.truncate_to
+
+    truncate_to = (
+        None if args.truncate_to == 0
+        else args.truncate_to
+    )
+
     build_esm_embeddings(
-        manifest=args.manifest,
-        embeddings_out=args.embeddings_out,
-        sequence_column=args.sequence_column,
-        idx_column=args.idx_column,
+        input_csv=args.input,
+        output_npy=args.output,
         model_name=args.model,
-        repr_layer=args.repr_layer,
         batch_size=args.batch_size,
         device=args.device,
         dtype=args.dtype,
