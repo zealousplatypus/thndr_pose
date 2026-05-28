@@ -1,0 +1,58 @@
+{
+  "experiment_name": "chemprop_esm_affinity_v1",
+  "paths": {
+    "affinity_split_csv": "processed/affinity_split_manifest.csv",
+    "protein_manifest_csv": "processed/protein_manifest.csv",
+    "esm_embeddings_npy": "processed/esm_embeddings.float32.npy",
+    "runs_dir": "runs"
+  },
+  "data": {
+    "smiles_column": "ligand",
+    "target_column": "affinity",
+    "split_column": "split",
+    "protein_idx_column": "protein_idx",
+    "uniprot_id_column": "uniprot_id",
+    "ligand_idx_column": "ligand_idx",
+    "active_splits": ["train", "val", "test"],
+    "include_uniprot_ids": ["P07550", "P08172"],
+    "drop_invalid_smiles": true
+  },
+  "model": {
+    "message_passing": {
+      "type": "bond",
+      "hidden_dim": 300,
+      "depth": 3,
+      "dropout": 0.1,
+      "undirected": false,
+      "activation": "relu"
+    },
+    "aggregation": "mean",
+    "ffn": {
+      "hidden_dim": 300,
+      "num_layers": 2,
+      "dropout": 0.1
+    },
+    "batch_norm": true,
+    "normalize_targets": true,
+    "normalize_protein_descriptors": true
+  },
+  "training": {
+    "seed": 0,
+    "batch_size": 64,
+    "max_epochs": 50,
+    "accelerator": "auto",
+    "devices": "auto",
+    "num_workers": 0,
+    "learning_rate": 0.001,
+    "patience": 10,
+    "monitor_metric": "val_loss"
+  },
+  "outputs": {
+    "save_predictions_all": false,
+    "save_train_val_predictions": true,
+    "save_checkpoints": true,
+    "save_model_state_dict": true,
+    "evaluate_test_during_training": false,
+    "overwrite_existing_run": false
+  }
+}
