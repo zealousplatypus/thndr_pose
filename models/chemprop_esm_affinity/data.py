@@ -317,23 +317,10 @@ def _make_datapoint(smiles: str, target: float, x_d: np.ndarray) -> Any:
     x_d = x_d.astype(np.float32, copy=False)
 
     if hasattr(molecule_datapoint, "from_smi"):
-        return _call_with_supported_kwargs(
-            molecule_datapoint.from_smi,
-            smi=smiles,
-            smiles=smiles,
-            y=y,
-            targets=y,
-            x_d=x_d,
-        )
+        return molecule_datapoint.from_smi(smi=smiles, y=y, x_d=x_d)
 
     mol = chemprop_utils.make_mol(smiles, keep_h=False, add_h=False)
-    return _call_with_supported_kwargs(
-        molecule_datapoint,
-        mol=mol,
-        y=y,
-        targets=y,
-        x_d=x_d,
-    )
+    return molecule_datapoint(mol=mol, y=y, x_d=x_d)
 
 
 def _build_dataset(datapoints: list[Any]) -> Any:
@@ -401,13 +388,15 @@ def build_chemprop_data(
                     target=float(row[config.data.target_column]),
                     x_d=descriptor,
                 )
-            except Exception:
+            except Exception as exc:
                 if config.data.drop_invalid_smiles:
                     LOGGER.warning(
-                        "Dropping invalid SMILES in split=%s row=%d: %s",
+                        "Dropping invalid SMILES in split=%s row=%d: %s (%s: %s)",
                         split,
                         row_idx,
                         row[config.data.smiles_column],
+                        type(exc).__name__,
+                        exc,
                     )
                     continue
                 raise

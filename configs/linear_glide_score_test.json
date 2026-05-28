@@ -1,0 +1,19 @@
+{
+  "experiment_name": "linear_glide_score_test",
+  "paths": {
+    "pose_csv": "archive/pose_manifest.csv",
+    "affinity_split_csv": "processed/affinity_split_manifest.csv",
+    "runs_dir": "runs"
+  },
+  "data": {
+    "uniprot_id_column": "uniprot_id",
+    "ligand_column": "ligand",
+    "target_column": "affinity",
+    "split_column": "split",
+    "active_splits": ["train", "val", "test"],
+    "include_uniprot_ids": ["P07550"]
+  },
+  "outputs": {
+    "overwrite_existing_run": true
+  }
+}

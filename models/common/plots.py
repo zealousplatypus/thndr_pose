@@ -42,3 +42,49 @@ def write_scatter_plot(
     plt.close(fig)
     return output_path
 
+
+def write_train_val_loss_plot(
+    history_df: pd.DataFrame,
+    output_path: str | Path,
+    *,
+    epoch_column: str = "epoch",
+    train_column: str = "train_loss",
+    val_column: str = "val_loss",
+    title: str = "Train and validation loss",
+) -> Path:
+    """Plot train/validation loss curves over epochs."""
+    output_path = ensure_parent_dir(output_path)
+    if history_df.empty:
+        raise ValueError("Loss history is empty; cannot write loss curve plot.")
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    epochs = history_df[epoch_column]
+
+    if train_column in history_df.columns and history_df[train_column].notna().any():
+        ax.plot(
+            epochs,
+            history_df[train_column],
+            marker="o",
+            label="train",
+            linewidth=2,
+        )
+
+    if val_column in history_df.columns and history_df[val_column].notna().any():
+        ax.plot(
+            epochs,
+            history_df[val_column],
+            marker="o",
+            label="val",
+            linewidth=2,
+        )
+
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+    return output_path
+

@@ -12,6 +12,8 @@ from typing import Any
 import pandas as pd
 
 from data_processing.common.manifest_io import ensure_parent_dir, write_manifest
+from models.common.lightning_callbacks import EpochLossHistoryCallback
+from models.common.plots import write_train_val_loss_plot
 from models.common.run_io import copy_experiment_config, make_run_dir, write_run_metadata
 
 from .config import ExperimentConfig, load_experiment_config
@@ -90,8 +92,14 @@ def _save_preprocessing_state(
 def _load_checkpoint_state(model: Any, checkpoint_path: str | Path) -> None:
     """Load Lightning checkpoint weights into an existing model."""
     torch = _torch_module()
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-    state_dict = checkpoint.get("state_dict", checkpoint)
+    checkpoint_path = Path(checkpoint_path)
+    load_kwargs: dict[str, Any] = {"map_location": "cpu"}
+    if "weights_only" in torch.load.__code__.co_varnames:
+        # Local Lightning .ckpt files embed Chemprop transforms (e.g. ScaleTransform).
+        load_kwargs["weights_only"] = False
+
+    checkpoint = torch.load(checkpoint_path, **load_kwargs)
+    state_dict = checkpoint.get("state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
     model.load_state_dict(state_dict)
 
 
@@ -155,12 +163,17 @@ def train_chemprop_esm_affinity(config_path: str | Path) -> pd.DataFrame:
         mode="min",
         patience=config.training.patience,
     )
+    loss_history = EpochLossHistoryCallback()
     trainer = Trainer(
         max_epochs=config.training.max_epochs,
         accelerator=config.training.accelerator,
         devices=config.training.devices,
         default_root_dir=run_dir,
-        callbacks=[checkpoint_callback, early_stopping],
+        callbacks=[
+            checkpoint_callback,
+            early_stopping,
+            loss_history.bind_lightning_callback(),
+        ],
     )
     trainer.fit(
         model,
@@ -174,6 +187,16 @@ def train_chemprop_esm_affinity(config_path: str | Path) -> pd.DataFrame:
     model_best_checkpoint = _copy_checkpoint(best_checkpoint, run_dir / "model" / "best_model.ckpt")
     if (checkpoint_dir / "last.ckpt").exists():
         _copy_checkpoint(checkpoint_dir / "last.ckpt", run_dir / "checkpoints" / "last.ckpt")
+
+    loss_history_df = loss_history.to_dataframe()
+    if not loss_history_df.empty:
+        write_manifest(loss_history_df, run_dir / "training_loss_history.csv")
+        write_train_val_loss_plot(
+            loss_history_df,
+            run_dir / "loss_curve.png",
+            title=f"{config.experiment_name} train/val loss",
+        )
+        LOGGER.info("Wrote training loss history and loss curve plot")
 
     _load_checkpoint_state(model, model_best_checkpoint)
     if config.outputs.save_model_state_dict:
@@ -215,6 +238,7 @@ def train_chemprop_esm_affinity(config_path: str | Path) -> pd.DataFrame:
                 data_bundle.examples_df[config.data.uniprot_id_column].nunique()
             ),
             "best_checkpoint": str(Path("checkpoints") / best_checkpoint.name),
+            "num_epochs_logged": int(len(loss_history_df)),
         },
         run_dir,
     )

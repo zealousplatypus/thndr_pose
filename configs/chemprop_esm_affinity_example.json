@@ -1,5 +1,5 @@
 {
-  "experiment_name": "chemprop_esm_affinity_v1",
+  "experiment_name": "chemprop_esm_affinity_P07550",
   "paths": {
     "affinity_split_csv": "processed/affinity_split_manifest.csv",
     "protein_manifest_csv": "processed/protein_manifest.csv",
@@ -14,7 +14,7 @@
     "uniprot_id_column": "uniprot_id",
     "ligand_idx_column": "ligand_idx",
     "active_splits": ["train", "val", "test"],
-    "include_uniprot_ids": ["P07550", "P08172"],
+    "include_uniprot_ids": ["P07550"],
     "drop_invalid_smiles": true
   },
   "model": {
@@ -53,6 +53,6 @@
     "save_checkpoints": true,
     "save_model_state_dict": true,
     "evaluate_test_during_training": false,
-    "overwrite_existing_run": false
+    "overwrite_existing_run": true
   }
 }
