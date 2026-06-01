@@ -10,6 +10,7 @@ data_processing/
         affinity_manifest.py: safe conversion of mol_binding_data.csv -> affinity_manifest.csv
         split_manifest.py: safe conversion of affinity_manifest.csv -> split_manifest.csv
         affinity_split_manifest.py: safe conversion of split_manifest.csv + affinity_manifest.csv -> affinity_split_manifest.csv
+        protein_subset.py: slug/path helpers for UniProt-filtered subset splits
 
     ligand_embeddings/
         pose_manifest_and_lmdb.py
@@ -25,6 +26,22 @@ processed/
 
 Run manifest builders from the repository root with module syntax, for example:
         `python -m data_processing.data_split.affinity_manifest`
+
+Global split (all proteins). Requires `--overwrite` if outputs already exist:
+
+```bash
+python -m data_processing.data_split.split_manifest --overwrite
+python -m data_processing.data_split.affinity_split_manifest --overwrite
+```
+
+Protein-subset split (fewer dropped ligands when training on one or more targets). Outputs use a sorted UniProt slug, e.g. `processed/P07550_split_manifest.csv`:
+
+```bash
+python -m data_processing.data_split.split_manifest --uniprot-ids P07550 --overwrite
+python -m data_processing.data_split.affinity_split_manifest --uniprot-ids P07550 --overwrite
+```
+
+Build the global `protein_manifest.csv` (and ESM embeddings) before subset splits so `protein_idx` stays aligned with `esm_embeddings.float32.npy`.
 
 
 *Models:*

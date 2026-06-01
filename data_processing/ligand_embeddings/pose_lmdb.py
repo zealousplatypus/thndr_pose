@@ -18,6 +18,7 @@ import json
 import pickle
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import lmdb
@@ -87,22 +88,17 @@ def _iter_ligand_mols(sdf_path: Path):
         yield mol_index, mol
 
 
-def _read_sdf_rows(sdf_path: Path) -> list[dict[str, object]]:
-    """Load docked SDF molecules with normalized metadata."""
-    rows = []
+def _iter_sdf_records(sdf_path: Path) -> Iterator[dict[str, object]]:
+    """Yield docked SDF molecules with normalized metadata one at a time."""
     resolved_sdf = str(sdf_path.resolve())
-    for mol_index, mol in _iter_ligand_mols(sdf_path):
-        rows.append(
-            {
-                "mol_index": mol_index,
-                "mol": mol,
-                "ligand": _parse_variant_ligand(mol.GetProp("s_lp_Variant")),
-                "grid": mol.GetProp("s_i_glide_gridfile").strip(),
-                "glide_score": float(mol.GetProp("r_i_docking_score")),
-                "source_sdf": resolved_sdf,
-            }
-        )
-    return rows
+    for _, mol in _iter_ligand_mols(sdf_path):
+        yield {
+            "mol": mol,
+            "ligand": _parse_variant_ligand(mol.GetProp("s_lp_Variant")),
+            "grid": mol.GetProp("s_i_glide_gridfile").strip(),
+            "glide_score": float(mol.GetProp("r_i_docking_score")),
+            "source_sdf": resolved_sdf,
+        }
 
 
 def rdmol_to_pyg_with_pos(mol):
@@ -227,10 +223,6 @@ def build_pose_manifest_and_lmdb(
     existing_manifest_df = _read_existing_manifest(pose_manifest_csv)
     existing_pose_ids = set(existing_manifest_df["pose_id"].tolist())
 
-    sdf_rows: list[dict[str, object]] = []
-    for sdf_path in sdf_paths:
-        sdf_rows.extend(_read_sdf_rows(sdf_path))
-
     pose_lmdb_dir = ensure_parent_dir(Path(pose_lmdb_dir) / "data.mdb").parent
     env = lmdb.open(
         str(pose_lmdb_dir),
@@ -246,57 +238,58 @@ def build_pose_manifest_and_lmdb(
     duplicate_rows: list[dict[str, object]] = []
     try:
         with env.begin(write=True) as txn:
-            for record in sdf_rows:
-                graph = rdmol_to_pyg_with_pos(record["mol"])
-                pose_hash = pose_graph_hash(graph)
-                manifest_row = _pose_manifest_row(record, pose_hash)
-                pose_key_bytes = manifest_row["pose_id"].encode("utf-8")
-                exists_in_manifest = manifest_row["pose_id"] in existing_pose_ids
-                exists_in_lmdb = txn.get(pose_key_bytes) is not None
-                if exists_in_manifest or exists_in_lmdb:
-                    duplicate_rows.append(
-                        {
-                            "pose_id": manifest_row["pose_id"],
-                            "pose_hash": manifest_row["pose_hash"],
-                            "source_sdf": manifest_row["source_sdf"],
-                            "pdb_key": manifest_row["pdb_key"],
-                            "ligand": manifest_row["ligand"],
-                            "glide_score": manifest_row["glide_score"],
-                            "pose_rank": None,
-                            "exists_in_manifest": exists_in_manifest,
-                            "exists_in_lmdb": exists_in_lmdb,
-                        }
-                    )
-                    continue
+            for sdf_path in sdf_paths:
+                for record in _iter_sdf_records(sdf_path):
+                    graph = rdmol_to_pyg_with_pos(record["mol"])
+                    pose_hash = pose_graph_hash(graph)
+                    manifest_row = _pose_manifest_row(record, pose_hash)
+                    pose_key_bytes = manifest_row["pose_id"].encode("utf-8")
+                    exists_in_manifest = manifest_row["pose_id"] in existing_pose_ids
+                    exists_in_lmdb = txn.get(pose_key_bytes) is not None
+                    if exists_in_manifest or exists_in_lmdb:
+                        duplicate_rows.append(
+                            {
+                                "pose_id": manifest_row["pose_id"],
+                                "pose_hash": manifest_row["pose_hash"],
+                                "source_sdf": manifest_row["source_sdf"],
+                                "pdb_key": manifest_row["pdb_key"],
+                                "ligand": manifest_row["ligand"],
+                                "glide_score": manifest_row["glide_score"],
+                                "pose_rank": None,
+                                "exists_in_manifest": exists_in_manifest,
+                                "exists_in_lmdb": exists_in_lmdb,
+                            }
+                        )
+                        continue
 
-                graph.pose_id = manifest_row["pose_id"]
-                graph.pose_hash = manifest_row["pose_hash"]
-                graph.pdb_key = manifest_row["pdb_key"]
-                graph.ligand = manifest_row["ligand"]
-                graph.glide_score = manifest_row["glide_score"]
-                inserted = txn.put(
-                    pose_key_bytes,
-                    pickle.dumps(graph),
-                    overwrite=False,
-                )
-                if not inserted:
-                    duplicate_rows.append(
-                        {
-                            "pose_id": manifest_row["pose_id"],
-                            "pose_hash": manifest_row["pose_hash"],
-                            "source_sdf": manifest_row["source_sdf"],
-                            "pdb_key": manifest_row["pdb_key"],
-                            "ligand": manifest_row["ligand"],
-                            "glide_score": manifest_row["glide_score"],
-                            "pose_rank": None,
-                            "exists_in_manifest": exists_in_manifest,
-                            "exists_in_lmdb": True,
-                        }
+                    graph.pose_id = manifest_row["pose_id"]
+                    graph.pose_hash = manifest_row["pose_hash"]
+                    graph.pdb_key = manifest_row["pdb_key"]
+                    graph.ligand = manifest_row["ligand"]
+                    graph.glide_score = manifest_row["glide_score"]
+                    inserted = txn.put(
+                        pose_key_bytes,
+                        pickle.dumps(graph),
+                        overwrite=False,
                     )
-                    continue
+                    if not inserted:
+                        duplicate_rows.append(
+                            {
+                                "pose_id": manifest_row["pose_id"],
+                                "pose_hash": manifest_row["pose_hash"],
+                                "source_sdf": manifest_row["source_sdf"],
+                                "pdb_key": manifest_row["pdb_key"],
+                                "ligand": manifest_row["ligand"],
+                                "glide_score": manifest_row["glide_score"],
+                                "pose_rank": None,
+                                "exists_in_manifest": exists_in_manifest,
+                                "exists_in_lmdb": True,
+                            }
+                        )
+                        continue
 
-                new_manifest_rows.append(manifest_row)
-                existing_pose_ids.add(manifest_row["pose_id"])
+                    new_manifest_rows.append(manifest_row)
+                    existing_pose_ids.add(manifest_row["pose_id"])
     finally:
         env.close()
 

@@ -31,12 +31,20 @@ from ..common.constants import (
     DEFAULT_TRAIN_FRACTION,
     DEFAULT_VAL_FRACTION,
     MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
+    PROTEIN_MANIFEST_COLUMNS,
     PROTEIN_MANIFEST_CSV,
     SPLIT_CONFLICT_GRAPH_CACHE_PKL,
     SPLIT_MANIFEST_CSV,
     SPLIT_MANIFEST_REPORT_TXT,
 )
 from ..common.manifest_io import assert_unique, ensure_parent_dir, read_csv_checked, write_manifest
+from .protein_subset import (
+    assert_outputs_writable,
+    filter_ligand_protein_maps,
+    make_protein_subset_slug,
+    normalize_uniprot_ids,
+    resolve_subset_paths,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -100,6 +108,7 @@ class RestartResult:
 
 def _read_ligand_proteins(
     affinity_csv: str | Path,
+    include_uniprot_ids: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict[str, set[str]], dict[str, set[str]]]:
     """Read unique ligands and their protein memberships from an affinity manifest."""
     affinity_df = read_csv_checked(affinity_csv, ["ligand", "uniprot_id"])
@@ -107,11 +116,22 @@ def _read_ligand_proteins(
     affinity_df["ligand"] = affinity_df["ligand"].astype(str)
     affinity_df["uniprot_id"] = affinity_df["uniprot_id"].astype(str)
 
+    if include_uniprot_ids is not None:
+        subset = set(include_uniprot_ids)
+        affinity_df = affinity_df[affinity_df["uniprot_id"].isin(subset)].copy()
+
     ligand_proteins: dict[str, set[str]] = {}
     protein_ligands: dict[str, set[str]] = {}
     for ligand, uniprot_id in affinity_df[["ligand", "uniprot_id"]].itertuples(index=False):
         ligand_proteins.setdefault(ligand, set()).add(uniprot_id)
         protein_ligands.setdefault(uniprot_id, set()).add(ligand)
+
+    if include_uniprot_ids is not None:
+        return filter_ligand_protein_maps(
+            ligand_proteins=ligand_proteins,
+            protein_ligands=protein_ligands,
+            include_uniprot_ids=include_uniprot_ids,
+        )
 
     ligands = sorted(ligand_proteins)
     if not ligands:
@@ -151,15 +171,37 @@ def _build_split_manifest_df(
     return split_df
 
 
-def _build_protein_manifest_df(protein_ligands: dict[str, set[str]]) -> pd.DataFrame:
+def _build_protein_manifest_df(
+    protein_ligands: dict[str, set[str]],
+    global_protein_csv: str | Path | None = None,
+) -> pd.DataFrame:
     """Build the protein index manifest for embedding lookup tables."""
     proteins = sorted(protein_ligands)
-    protein_df = pd.DataFrame(
-        {
-            "uniprot_id": proteins,
-            "protein_idx": list(range(len(proteins))),
-        }
-    )
+    global_protein_path = Path(global_protein_csv) if global_protein_csv is not None else None
+    if global_protein_path is not None and global_protein_path.exists():
+        global_df = read_csv_checked(global_protein_path, PROTEIN_MANIFEST_COLUMNS)
+        global_df = global_df.loc[:, list(PROTEIN_MANIFEST_COLUMNS)].copy()
+        global_df["uniprot_id"] = global_df["uniprot_id"].astype(str)
+        mapping = dict(zip(global_df["uniprot_id"], global_df["protein_idx"]))
+        missing = [protein for protein in proteins if protein not in mapping]
+        if missing:
+            raise ValueError(
+                "Proteins missing from global protein manifest "
+                f"{global_protein_path}: {missing[:10]}"
+            )
+        protein_df = pd.DataFrame(
+            {
+                "uniprot_id": proteins,
+                "protein_idx": [mapping[protein] for protein in proteins],
+            }
+        )
+    else:
+        protein_df = pd.DataFrame(
+            {
+                "uniprot_id": proteins,
+                "protein_idx": list(range(len(proteins))),
+            }
+        )
     assert_unique(protein_df, ["uniprot_id"], "protein_manifest")
     assert_unique(protein_df, ["protein_idx"], "protein_manifest protein_idx")
     return protein_df
@@ -793,6 +835,7 @@ def _write_split_manifest_report(
 
 def build_split_manifest(
     affinity_csv: str | Path = AFFINITY_MANIFEST_CSV,
+    include_uniprot_ids: tuple[str, ...] | None = None,
     tanimoto_threshold: float = DEFAULT_TANIMOTO_THRESHOLD,
     radius: int = DEFAULT_FINGERPRINT_RADIUS,
     fp_size: int = DEFAULT_FINGERPRINT_SIZE,
@@ -803,13 +846,18 @@ def build_split_manifest(
     test_fraction: float = DEFAULT_TEST_FRACTION,
     conflict_graph_cache: str | Path | None = SPLIT_CONFLICT_GRAPH_CACHE_PKL,
     report_txt: str | Path | None = SPLIT_MANIFEST_REPORT_TXT,
+    global_protein_csv: str | Path | None = PROTEIN_MANIFEST_CSV,
     min_ligands_for_required_val_test: int = MIN_LIGANDS_FOR_REQUIRED_VAL_TEST,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build split and protein manifests from unique ligands in `affinity_manifest.csv`."""
     if num_restarts <= 0:
         raise ValueError(f"num_restarts must be positive; got {num_restarts}")
 
-    ligands, ligand_proteins, protein_ligands = _read_ligand_proteins(affinity_csv)
+    normalized_uniprot_ids = normalize_uniprot_ids(include_uniprot_ids)
+    ligands, ligand_proteins, protein_ligands = _read_ligand_proteins(
+        affinity_csv,
+        include_uniprot_ids=normalized_uniprot_ids,
+    )
     conflict_graph = _get_conflict_graph(
         ligands=ligands,
         tanimoto_threshold=tanimoto_threshold,
@@ -849,7 +897,10 @@ def build_split_manifest(
     )
 
     split_df = _build_split_manifest_df(ligands=ligands, assignments=best_result.assignments)
-    protein_df = _build_protein_manifest_df(protein_ligands=protein_ligands)
+    protein_df = _build_protein_manifest_df(
+        protein_ligands=protein_ligands,
+        global_protein_csv=global_protein_csv if normalized_uniprot_ids else None,
+    )
 
     total_conflicts = sum(len(neighbors) for neighbors in conflict_graph.values()) // 2
     per_protein_stats = _compute_per_protein_stats(
@@ -918,6 +969,28 @@ def parse_args() -> argparse.Namespace:
         help="Path to affinity_manifest.csv.",
     )
     parser.add_argument(
+        "--uniprot-ids",
+        nargs="+",
+        default=None,
+        help=(
+            "Restrict splitting to these UniProt IDs. Outputs use a sorted slug prefix "
+            "(e.g. P07550_split_manifest.csv)."
+        ),
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace existing output files if they already exist.",
+    )
+    parser.add_argument(
+        "--global-protein-csv",
+        default=str(PROTEIN_MANIFEST_CSV),
+        help=(
+            "Global protein_manifest.csv used to preserve protein_idx for subset runs "
+            "(when --uniprot-ids is set)."
+        ),
+    )
+    parser.add_argument(
         "--tanimoto-threshold",
         type=float,
         default=DEFAULT_TANIMOTO_THRESHOLD,
@@ -972,28 +1045,54 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-csv",
-        default=str(SPLIT_MANIFEST_CSV),
-        help="Output path for split_manifest.csv.",
+        default=None,
+        help="Output path for split_manifest.csv (default depends on --uniprot-ids).",
     )
     parser.add_argument(
         "--protein-output-csv",
-        default=str(PROTEIN_MANIFEST_CSV),
-        help="Output path for protein_manifest.csv.",
+        default=None,
+        help="Output path for protein_manifest.csv (default depends on --uniprot-ids).",
     )
     parser.add_argument(
         "--report-txt",
-        default=str(SPLIT_MANIFEST_REPORT_TXT),
-        help="Output path for the restart report text file.",
+        default=None,
+        help="Output path for the restart report text file (default depends on --uniprot-ids).",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    normalized_uniprot_ids = normalize_uniprot_ids(args.uniprot_ids)
+    slug = make_protein_subset_slug(normalized_uniprot_ids) if normalized_uniprot_ids else None
+    default_paths = resolve_subset_paths(slug=slug)
+
+    if args.output_csv is None:
+        args.output_csv = str(default_paths.split_manifest_csv)
+    if args.protein_output_csv is None:
+        args.protein_output_csv = str(default_paths.protein_manifest_csv)
+    if args.report_txt is None:
+        args.report_txt = str(default_paths.split_manifest_report_txt)
+    if args.conflict_graph_cache == str(SPLIT_CONFLICT_GRAPH_CACHE_PKL) and slug is not None:
+        args.conflict_graph_cache = str(default_paths.conflict_graph_cache_pkl)
+
+    args.include_uniprot_ids = normalized_uniprot_ids
+    return args
 
 
 def main() -> None:
     """CLI entrypoint."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     args = parse_args()
+    output_paths = [
+        Path(args.output_csv),
+        Path(args.protein_output_csv),
+        Path(args.report_txt),
+    ]
+    if args.conflict_graph_cache:
+        output_paths.append(Path(args.conflict_graph_cache))
+    assert_outputs_writable(output_paths, overwrite=args.overwrite)
+
     split_df, protein_df = build_split_manifest(
         affinity_csv=args.affinity_csv,
+        include_uniprot_ids=args.include_uniprot_ids,
         tanimoto_threshold=args.tanimoto_threshold,
         radius=args.radius,
         fp_size=args.fp_size,
@@ -1004,6 +1103,7 @@ def main() -> None:
         test_fraction=args.test_fraction,
         conflict_graph_cache=args.conflict_graph_cache,
         report_txt=args.report_txt,
+        global_protein_csv=args.global_protein_csv,
     )
     output_path = write_manifest(split_df, args.output_csv)
     protein_output_path = write_manifest(protein_df, args.protein_output_csv)
