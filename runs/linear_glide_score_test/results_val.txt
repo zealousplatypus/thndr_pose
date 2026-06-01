@@ -1,0 +1,5 @@
+split: val
+num_examples: 23
+pearson_r: -0.013245681444336898
+slope: -0.30809119365925947
+intercept: 5.232825226211301

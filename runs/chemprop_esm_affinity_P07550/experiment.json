@@ -1,8 +1,8 @@
 {
-  "experiment_name": "chemprop_esm_affinity_prefiltered_P14416",
+  "experiment_name": "chemprop_esm_affinity_P07550",
   "paths": {
-    "affinity_split_csv": "processed/P14416_affinity_split_manifest.csv",
-    "protein_manifest_csv": "processed/P14416_protein_manifest.csv",
+    "affinity_split_csv": "processed/affinity_split_manifest.csv",
+    "protein_manifest_csv": "processed/protein_manifest.csv",
     "esm_embeddings_npy": "processed/esm_embeddings.float32.npy",
     "runs_dir": "runs"
   },
@@ -14,7 +14,7 @@
     "uniprot_id_column": "uniprot_id",
     "ligand_idx_column": "ligand_idx",
     "active_splits": ["train", "val", "test"],
-    "include_uniprot_ids": [],
+    "include_uniprot_ids": ["P07550"],
     "drop_invalid_smiles": true
   },
   "model": {

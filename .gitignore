@@ -2,10 +2,21 @@
 __pycache__/
 *.pyc
 raw/
-runs/
 processed/
 grids/
 archive/
 tests/
 .pytest_deps/
 .pytest_cache/
+
+# runs 
+runs/*/*.csv
+runs/*/checkpoints/
+runs/*/lightning_logs/
+runs/*/model/
+runs/*/predictions_train_val.csv
+runs/*/predictions_test.csv
+runs/*/predictions_train.csv
+runs/*/predictions_val.csv
+runs/*/predictions_all.csv
+runs/*/predictions_all.csv

@@ -8,7 +8,7 @@
 # source pose_lmdb/bin/activate
 
 # pip install --upgrade pip
-# pip install -r pose_lmdb_requirements.txt
+# pip install -r venvs/pose_lmdb_requirements.txt
 
 
 tqdm

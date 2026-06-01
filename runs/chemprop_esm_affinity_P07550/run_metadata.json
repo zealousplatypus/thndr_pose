@@ -1,0 +1,18 @@
+{
+  "best_checkpoint": "checkpoints/best-v2.ckpt",
+  "descriptor_std_max": 5.066394805908203e-07,
+  "esm_embedding_shape": [
+    10,
+    960
+  ],
+  "experiment_name": "chemprop_esm_affinity_P07550",
+  "num_epochs_logged": 15,
+  "num_test": 17,
+  "num_train": 203,
+  "num_unique_ligands": 243,
+  "num_unique_proteins": 1,
+  "num_val": 23,
+  "resolved_batch_norm": false,
+  "resolved_normalize_protein_descriptors": true,
+  "unique_proteins": 1
+}
