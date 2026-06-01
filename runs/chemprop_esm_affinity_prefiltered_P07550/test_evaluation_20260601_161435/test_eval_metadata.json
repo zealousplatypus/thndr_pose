@@ -1,0 +1,6 @@
+{
+  "checkpoint": "runs/chemprop_esm_affinity_prefiltered_P07550/checkpoints/best.ckpt",
+  "experiment_name": "chemprop_esm_affinity_prefiltered_P07550",
+  "num_test": 11,
+  "output_dir": "/Users/zanechan/boltzProject/thndr_pose/runs/chemprop_esm_affinity_prefiltered_P07550/test_evaluation_20260601_161435"
+}

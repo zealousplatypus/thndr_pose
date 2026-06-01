@@ -1,0 +1,14 @@
+{
+  "best_checkpoint": "checkpoints/best.ckpt",
+  "esm_embedding_shape": [
+    10,
+    960
+  ],
+  "experiment_name": "chemprop_esm_affinity_prefiltered_P07550",
+  "num_epochs_logged": 26,
+  "num_test": 11,
+  "num_train": 701,
+  "num_unique_ligands": 723,
+  "num_unique_proteins": 1,
+  "num_val": 11
+}

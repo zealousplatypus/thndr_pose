@@ -1,8 +1,8 @@
 {
-  "experiment_name": "chemprop_esm_affinity_prefiltered_P07550_P14416",
+  "experiment_name": "chemprop_esm_affinity_prefiltered_P07550",
   "paths": {
-    "affinity_split_csv": "processed/P07550_P14416_affinity_split_manifest.csv",
-    "protein_manifest_csv": "processed/P07550_P14416_protein_manifest.csv",
+    "affinity_split_csv": "processed/P07550_affinity_split_manifest.csv",
+    "protein_manifest_csv": "processed/P07550_protein_manifest.csv",
     "esm_embeddings_npy": "processed/esm_embeddings.float32.npy",
     "runs_dir": "runs"
   },
