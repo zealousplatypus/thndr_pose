@@ -1,0 +1,22 @@
+# Run:
+# ml python/3.12.1
+# ml cuda/12.6.1
+# ml py-numpy/2.2.6_py312
+# ml py-pandas/2.2.1_py312
+
+# python -m venv pose_lmdb
+# source pose_lmdb/bin/activate
+
+# pip install --upgrade pip
+# pip install -r pose_lmdb_requirements.txt
+
+
+tqdm
+pyyaml
+rdkit
+lmdb
+click
+
+# ML
+torch
+torch-geometric
