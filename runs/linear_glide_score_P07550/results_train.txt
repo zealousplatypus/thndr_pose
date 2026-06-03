@@ -1,0 +1,5 @@
+split: train
+num_examples: 675
+pearson_r: 0.006763934147430523
+slope: -0.007278846524407093
+intercept: 6.910392104238339

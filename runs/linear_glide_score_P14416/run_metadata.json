@@ -1,0 +1,16 @@
+{
+  "active_splits": [
+    "train",
+    "val",
+    "test"
+  ],
+  "experiment_name": "linear_glide_score_P14416",
+  "include_uniprot_ids": [
+    "P14416"
+  ],
+  "intercept": 5.960141481940676,
+  "num_test": 116,
+  "num_train": 3831,
+  "num_val": 125,
+  "slope": -0.11154810998343867
+}

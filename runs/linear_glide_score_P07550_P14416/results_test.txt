@@ -1,0 +1,5 @@
+split: test
+num_examples: 131
+pearson_r: -0.05342876073337244
+slope: -0.10307582262262767
+intercept: 6.0235429296898335
