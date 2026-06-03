@@ -5,12 +5,10 @@
     "test"
   ],
   "experiment_name": "linear_glide_score_test",
-  "include_uniprot_ids": [
-    "P08172"
-  ],
-  "intercept": 8.068995107819594,
-  "num_test": 31,
-  "num_train": 277,
-  "num_val": 68,
-  "slope": 0.17092612159183712
+  "include_uniprot_ids": [],
+  "intercept": 7.464022802074167,
+  "num_test": 420,
+  "num_train": 13062,
+  "num_val": 407,
+  "slope": 0.032565004140891314
 }

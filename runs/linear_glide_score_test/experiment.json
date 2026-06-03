@@ -11,7 +11,7 @@
     "target_column": "affinity",
     "split_column": "split",
     "active_splits": ["train", "val", "test"],
-    "include_uniprot_ids": ["P08172"]
+    "include_uniprot_ids": []
   },
   "outputs": {
     "overwrite_existing_run": true
