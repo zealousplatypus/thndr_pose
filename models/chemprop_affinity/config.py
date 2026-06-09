@@ -26,6 +26,7 @@ class ModelConfig:
     ffn_hidden_dim: int = 300
     ffn_num_layers: int = 2
     dropout: float = 0.1
+    batchnorm: bool = True
 
 @dataclass(frozen=True)
 class TrainingConfig: 
@@ -41,6 +42,7 @@ class ExperimentConfig:
     """Top-level Chemprop affinity experiment config."""
 
     experiment_name: str
+    uniprot_id: str
     paths: PathConfig = field(default_factory=PathConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
@@ -83,7 +85,8 @@ def _model_config(data: dict[str, Any] | None) -> ModelConfig:
         message_hidden_dim=int(data.get("message_hidden_dim", 300)),
         ffn_hidden_dim=int(data.get("ffn_hidden_dim", 300)),
         ffn_num_layers=int(data.get("ffn_num_layers", 2)),
-        dropout=float(data.get("dropout", 0.1))
+        dropout=float(data.get("dropout", 0.1)),
+        batchnorm=bool(data.get("batchnorm", True))
     )
 
 def load_experiment_config(path: str | Path) -> ExperimentConfig:
@@ -91,8 +94,10 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     config_path = Path(path)
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     experiment_name = str(raw.get("experiment_name", "")).strip()
+    uniprot_id = str(raw["uniprot_id"]).strip() #TODO make this fail safely
     config = ExperimentConfig(
         experiment_name=experiment_name,
+        uniprot_id=uniprot_id,
         paths=_path_config(raw.get("paths")),
         training=_training_config(raw.get("training")),
         model=_model_config(raw.get("model"))
