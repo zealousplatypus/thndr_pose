@@ -1,0 +1,26 @@
+{
+    "experiment_name": "chemprop_ligand_baseline",
+  
+    "uniprot_id": "P07550",
+
+    "paths": {
+      "affinity_split_csv": "processed/affinity_split_manifest.csv",
+      "output_dir": "runs/chemprop_ligand_baseline"
+    },
+  
+    "model": {
+      "message_hidden_dim": 300,
+      "message_depth": 3,
+      "ffn_hidden_dim": 300,
+      "ffn_layers": 2,
+      "dropout": 0.1,
+      "batchnorm": true
+    },
+  
+    "training": {
+      "batch_size": 64,
+      "epochs": 50,
+      "learning_rate": 0.001,
+      "seed": 0
+    }
+  }
