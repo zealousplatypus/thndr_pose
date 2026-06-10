@@ -5,8 +5,11 @@ from typing import Any
 
 import pandas as pd
 
+import torch
 from lightning import pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
+
+from chemprop import models
 
 from data_processing.common.manifest_io import write_manifest
 
@@ -17,6 +20,7 @@ from models.common.run_io import copy_experiment_config, make_run_dir
 from .config import ExperimentConfig, load_experiment_config
 from .data import build_chemprop_data, ChempropDataBundle
 from .model import build_chemprop_model
+from .evaluate import predict
 
 LOGGER = logging.getLogger(__name__)
 
@@ -31,7 +35,8 @@ def train_chemprop_affinity(config_path: str | Path) -> pd.DataFrame:
     # Configure model checkpointing
     run_dir = make_run_dir(
         config.paths.runs_dir,
-        config.experiment_name
+        config.experiment_name,
+        config.overwrite
     )
     copy_experiment_config(config_path, run_dir)
 
@@ -49,7 +54,7 @@ def train_chemprop_affinity(config_path: str | Path) -> pd.DataFrame:
         enable_checkpointing=True, # Use `True` if you want to save model checkpoints. The checkpoints will be saved in the `checkpoints` folder.
         enable_progress_bar=True,
         accelerator="auto",
-        max_epochs=20, # number of epochs to train for
+        max_epochs=config.training.max_epochs, # number of epochs to train for
         callbacks=[
             checkpoint_callback,
             loss_history.bind_lightning_callback()
@@ -70,7 +75,21 @@ def train_chemprop_affinity(config_path: str | Path) -> pd.DataFrame:
         )
         LOGGER.info("Wrote training loss history and loss curve plot")
 
-    # Writing train and val predictions
+
+
+    best_model = checkpoint_callback.best_model_path
+    mpnn = models.MPNN.load_from_checkpoint(best_model)
+
+    torch.save(mpnn.state_dict(), run_dir / "model" / "best_model_state_dict.pt")
+
+    train_predictions = predict(mpnn, chemprop_data_bundle.train_dataloader)
+    dev_predictions = predict(mpnn, chemprop_data_bundle.dev_dataloader)
+    test_predictions = predict(mpnn, chemprop_data_bundle.test_dataloader)
+
+    print(chemprop_data_bundle.test_dataloader)
+    print(test_predictions)
+
+    # # Writing train and val predictions
     # prediction_splits = ("train", "val")
     # predictions_df = predict_splits(
     #     trainer=trainer,

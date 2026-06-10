@@ -46,6 +46,7 @@ class ExperimentConfig:
     paths: PathConfig = field(default_factory=PathConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
+    overwrite: bool = False
 
     @property
     def run_dir(self) -> Path:
@@ -95,11 +96,13 @@ def load_experiment_config(path: str | Path) -> ExperimentConfig:
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     experiment_name = str(raw.get("experiment_name", "")).strip()
     uniprot_id = str(raw["uniprot_id"]).strip() #TODO make this fail safely
+    overwrite = bool(raw.get("overwrite_existing_run", False))
     config = ExperimentConfig(
         experiment_name=experiment_name,
         uniprot_id=uniprot_id,
         paths=_path_config(raw.get("paths")),
         training=_training_config(raw.get("training")),
-        model=_model_config(raw.get("model"))
+        model=_model_config(raw.get("model")),
+        overwrite=overwrite
     )
     return config

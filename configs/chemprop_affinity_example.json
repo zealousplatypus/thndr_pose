@@ -19,8 +19,10 @@
   
     "training": {
       "batch_size": 64,
-      "epochs": 50,
+      "max_epochs": 10,
       "learning_rate": 0.001,
       "seed": 0
-    }
+    },
+
+    "overwrite_existing_run": true
   }
