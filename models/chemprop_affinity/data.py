@@ -1,6 +1,4 @@
-from random import shuffle
 from dataclasses import dataclass
-from data_processing.common.constants import ACTIVE_SPLIT_NAMES
 
 import pandas as pd
 import numpy as np
@@ -14,14 +12,12 @@ from typing import Any
 class ChempropDataBundle:
     """Chemprop datasets, dataloaders, and fitted preprocessing state."""
 
-    train_dataloader: Any
-    dev_dataloader: Any
-    test_dataloader: Any
+    df_filtered: pd.DataFrame
+    data_loaders: Any
     scaler: Any
 
-def load_data_splits(config: ExperimentConfig) -> dict[str: Any]:
-    """Outputs three dfs:
-    train_indices, val_indices, test_indices"""
+def load_data_splits(config: ExperimentConfig) -> tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
+    """Return filtered affinity rows and train/val/test row indices."""
     affinity_df = pd.read_csv(config.paths.affinity_split_csv)
     uniprot_id = config.uniprot_id
     
@@ -55,4 +51,7 @@ def build_chemprop_data(config: ExperimentConfig):
     val_loader = data.build_dataloader(val_dset, shuffle=False)
     test_loader = data.build_dataloader(test_dset, shuffle=False)
 
-    return ChempropDataBundle(train_loader, val_loader, test_loader, scaler)
+    return ChempropDataBundle(df_filtered, 
+                            {'train': train_loader, 'val': val_loader, 'test': test_loader},
+                            scaler
+                            )

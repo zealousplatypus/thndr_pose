@@ -63,13 +63,14 @@ def _resolve_path(value: str | Path | None) -> Path | None:
     return MVP_ROOT / path
 
 def _path_config(data: dict[str, Any] | None) -> PathConfig:
+    data = data or {}
+    # `runs_dir` is the parent directory; `make_run_dir` appends `experiment_name`.
+    runs_dir = data.get("runs_dir", data.get("output_dir", RUNS_DIR))
     return PathConfig(
         affinity_split_csv=_resolve_path(
             data.get("affinity_split_csv", AFFINITY_SPLIT_MANIFEST_CSV)
         ),
-        runs_dir=_resolve_path(
-            data.get("output_dir", RUNS_DIR)
-        )
+        runs_dir=_resolve_path(runs_dir) or RUNS_DIR,
     )
 
 def _training_config(data: dict[str, Any] | None) -> TrainingConfig:

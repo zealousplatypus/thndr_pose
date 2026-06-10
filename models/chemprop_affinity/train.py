@@ -1,8 +1,6 @@
 import argparse
 import logging
 from pathlib import Path
-from typing import Any
-
 import pandas as pd
 
 import torch
@@ -12,15 +10,17 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from chemprop import models
 
 from data_processing.common.manifest_io import write_manifest
+from data_processing.common.constants import ACTIVE_SPLIT_NAMES
 
 from models.common.lightning_callbacks import EpochLossHistoryCallback
 from models.common.plots import write_train_val_loss_plot
 from models.common.run_io import copy_experiment_config, make_run_dir
+from models.common.predictions import write_split_outputs
 
 from .config import ExperimentConfig, load_experiment_config
-from .data import build_chemprop_data, ChempropDataBundle
+from .data import build_chemprop_data
 from .model import build_chemprop_model
-from .evaluate import predict
+from .evaluate import predict_splits
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,11 +42,11 @@ def train_chemprop_affinity(config_path: str | Path) -> pd.DataFrame:
 
     checkpoint_dir = run_dir / "checkpoints"
     checkpoint_callback = ModelCheckpoint(
-        checkpoint_dir,  # Directory where model checkpoints will be saved
-        "best-{epoch}-{val_loss:.2f}",  # Filename format for checkpoints, including epoch and validation loss
-        "val_loss",  # Metric used to select the best checkpoint (based on validation loss)
-        mode="min",  # Save the checkpoint with the lowest validation loss (minimization objective)
-        save_last=True,  # Always save the most recent checkpoint, even if it's not the best
+        dirpath=checkpoint_dir,
+        filename="best-{epoch}-{val_loss:.2f}",
+        monitor="val_loss",
+        mode="min",
+        save_last=True,
     )
     loss_history = EpochLossHistoryCallback()
     trainer = pl.Trainer(
@@ -62,7 +62,7 @@ def train_chemprop_affinity(config_path: str | Path) -> pd.DataFrame:
     )
 
     # Training
-    trainer.fit(mpnn, chemprop_data_bundle.train_dataloader, chemprop_data_bundle.dev_dataloader)
+    trainer.fit(mpnn, chemprop_data_bundle.data_loaders['train'], chemprop_data_bundle.data_loaders['val'])
 
     # Saving stuff
     loss_history_df = loss_history.to_dataframe()
@@ -77,32 +77,13 @@ def train_chemprop_affinity(config_path: str | Path) -> pd.DataFrame:
 
 
 
-    best_model = checkpoint_callback.best_model_path
-    mpnn = models.MPNN.load_from_checkpoint(best_model)
+    best_model_path = Path(checkpoint_callback.best_model_path)
+    mpnn = models.MPNN.load_from_checkpoint(best_model_path)
 
     torch.save(mpnn.state_dict(), run_dir / "model" / "best_model_state_dict.pt")
 
-    train_predictions = predict(mpnn, chemprop_data_bundle.train_dataloader)
-    dev_predictions = predict(mpnn, chemprop_data_bundle.dev_dataloader)
-    test_predictions = predict(mpnn, chemprop_data_bundle.test_dataloader)
-
-    print(chemprop_data_bundle.test_dataloader)
-    print(test_predictions)
-
-    # # Writing train and val predictions
-    # prediction_splits = ("train", "val")
-    # predictions_df = predict_splits(
-    #     trainer=trainer,
-    #     model=mpnn,
-    #     data_bundle=chemprop_data_bundle,
-    #     dataloaders=chemprop_data.dataloaders,
-    #     splits=prediction_splits,
-    # )
-    # if config.outputs.save_train_val_predictions:
-    #     from models.common.predictions import write_split_outputs
-
-    #     write_split_outputs(predictions_df, run_dir, splits=prediction_splits)
-    #     write_manifest(predictions_df, run_dir / "predictions_train_val.csv")
+    predictions_df = predict_splits(mpnn, chemprop_data_bundle)
+    write_split_outputs(predictions_df, run_dir, ACTIVE_SPLIT_NAMES)
 
 def parse_args() -> argparse.Namespace:
     """Parse CLI args."""

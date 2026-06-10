@@ -13,6 +13,7 @@ def build_chemprop_model(
     output_transform = nn.UnscaleTransform.from_standard_scaler(scaler)
     ffn = nn.RegressionFFN(output_transform=output_transform)
     batch_norm = config.model.batchnorm
+    activation = "relu"
     # metric_list = [nn.metrics.RMSE(), nn.metrics.MAE()] # Only the first metric is used for training and early stopping
-    mpnn = models.MPNN(mp, agg, ffn, batch_norm) # TODO add metrics to be implemented?
+    mpnn = models.MPNN(mp, agg, ffn, batch_norm, activation) # TODO add metrics to be implemented?
     return mpnn
