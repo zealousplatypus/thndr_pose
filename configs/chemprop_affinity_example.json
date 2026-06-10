@@ -1,11 +1,11 @@
 {
-    "experiment_name": "chemprop_ligand_baseline",
+    "experiment_name": "chemprop_ligand_P14416",
   
-    "uniprot_id": "P07550",
+    "uniprot_id": "P14416",
 
     "paths": {
       "affinity_split_csv": "processed/affinity_split_manifest.csv",
-      "output_dir": "runs/chemprop_ligand_baseline"
+      "runs_dir": "runs"
     },
   
     "model": {
@@ -19,7 +19,7 @@
   
     "training": {
       "batch_size": 64,
-      "max_epochs": 10,
+      "max_epochs": 100,
       "learning_rate": 0.001,
       "seed": 0
     },
