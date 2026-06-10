@@ -1,7 +1,7 @@
 {
-    "experiment_name": "chemprop_ligand_P14416",
+    "experiment_name": "chemprop_ligand_P07550_100epochs",
   
-    "uniprot_id": "P14416",
+    "uniprot_id": "P07550",
 
     "paths": {
       "affinity_split_csv": "processed/affinity_split_manifest.csv",
