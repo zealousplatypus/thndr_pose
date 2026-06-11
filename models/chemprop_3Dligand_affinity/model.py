@@ -1,6 +1,6 @@
-from models.chemprop_affinity.config import ExperimentConfig
+from .config import ExperimentConfig
 
-from chemprop import data, featurizers, models, nn
+from chemprop import models, nn
 from typing import Any
 
 def build_chemprop_model(

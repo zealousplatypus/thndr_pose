@@ -7,7 +7,9 @@ from data_processing.common.constants import (
     ACTIVE_SPLIT_NAMES, 
     AFFINITY_SPLIT_MANIFEST_CSV, 
     MVP_ROOT,
+    POSE_MANIFEST_CSV,
     RUNS_DIR,
+    POSE_LMDB_DIR,
 )
 
 @dataclass(frozen=True)
@@ -15,6 +17,8 @@ class PathConfig:
     """Filesystem inputs and run root."""
 
     affinity_split_csv: Path = AFFINITY_SPLIT_MANIFEST_CSV
+    pose_manifest_csv: Path = POSE_MANIFEST_CSV
+    pose_lmdb_dir: Path = POSE_LMDB_DIR
     runs_dir: Path = RUNS_DIR
 
 @dataclass(frozen=True)
@@ -69,6 +73,12 @@ def _path_config(data: dict[str, Any] | None) -> PathConfig:
     return PathConfig(
         affinity_split_csv=_resolve_path(
             data.get("affinity_split_csv", AFFINITY_SPLIT_MANIFEST_CSV)
+        ),
+        pose_manifest_csv=_resolve_path(
+            data.get("pose_manifest_csv", POSE_MANIFEST_CSV)
+        ),
+        pose_lmdb_dir=_resolve_path(
+            data.get("pose_lmdb_dir", POSE_LMDB_DIR)
         ),
         runs_dir=_resolve_path(runs_dir) or RUNS_DIR,
     )

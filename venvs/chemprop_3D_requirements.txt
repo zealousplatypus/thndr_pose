@@ -1,0 +1,25 @@
+# Run:
+# ml python/3.12.1
+# ml cuda/12.6.1
+# ml py-scikit-learn/1.5.1_py312
+# ml py-pandas/2.2.1_py312
+
+# python3 -m venv chemprop_3D
+# source chemprop_3D/bin/activate
+
+# pip install --upgrade pip
+# pip install -r venvs/chemprop_3D_requirements.txt
+
+
+tqdm
+pyyaml
+matplotlib
+rdkit
+lmdb
+click
+
+# ML
+torch
+torch-geometric
+lightning
+chemprop
