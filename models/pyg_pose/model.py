@@ -1,7 +1,7 @@
 import torch
 from torch import nn, optim
 import lightning as L
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, global_mean_pool, global_add_pool
 
 # define the LightningModule
 class LitPoseGNN(L.LightningModule):
@@ -29,7 +29,6 @@ class LitPoseGNN(L.LightningModule):
         x = global_mean_pool(x, batch_idx)
         x = self.regressor(x)
         return x
-
 
     def training_step(self, batch, batch_idx=None):
         # training_step defines the train loop.
@@ -59,7 +58,6 @@ class LitPoseGNN(L.LightningModule):
         )
         return loss
     
-
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
         return optimizer

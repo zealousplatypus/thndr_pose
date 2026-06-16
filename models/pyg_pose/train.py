@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 import pandas as pd
 import lightning as L
@@ -7,12 +8,15 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from models.common.lightning_callbacks import EpochLossHistoryCallback
 from models.common.plots import write_train_val_loss_plot
 from models.common.run_io import copy_experiment_config, make_run_dir
-from models.pyg_pose.config import load_experiment_config
+from models.common.predictions import write_split_outputs
 
 # model specific imports
+from models.pyg_pose.config import load_experiment_config
 from models.pyg_pose.data import build_pyg_pose_data
 from models.pyg_pose.model import LitPoseGNN
+from models.pyg_pose.evaluate import predict_splits
 
+from data_processing.common.constants import ACTIVE_SPLIT_NAMES
 
 def train(config_path: str | Path) -> pd.DataFrame:
     config = load_experiment_config(config_path)
@@ -69,9 +73,34 @@ def train(config_path: str | Path) -> pd.DataFrame:
         val_dataloaders=val_loader,
     )
 
+    model = model.load_from_checkpoint(checkpoint_callback.best_model_path)
+
     history_df = loss_history.to_dataframe()
     history_df.to_csv(run_dir / "loss_history.csv", index=False)
     if not history_df.empty:
         write_train_val_loss_plot(history_df, run_dir / "loss_history.png")
 
-    return history_df
+    predictions_df = predict_splits(model, data_bundle)
+    write_split_outputs(predictions_df, run_dir, ACTIVE_SPLIT_NAMES)
+
+def parse_args() -> argparse.Namespace:
+    """Parse CLI args."""
+    parser = argparse.ArgumentParser(
+        description="Train a PyG PoseGNN model."
+    )
+    parser.add_argument(
+        "--experiment",
+        required=True,
+        type=Path,
+        help="Path to experiment JSON.",
+    )
+    return parser.parse_args()
+
+def main(): 
+    """CLI entrypoint."""
+    args = parse_args()
+    train(args.experiment)
+
+
+if __name__ == "__main__":
+    main()

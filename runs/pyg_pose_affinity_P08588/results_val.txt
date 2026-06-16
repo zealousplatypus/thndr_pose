@@ -1,0 +1,5 @@
+split: val
+num_examples: 2
+pearson_r: 1.0
+rmse: 0.012368449934918813
+mae: 0.012355148792266846

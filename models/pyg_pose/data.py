@@ -4,6 +4,7 @@ import lmdb
 import pickle
 import pandas as pd
 import torch
+from torch.utils.data import Subset
 from torch_geometric.data import Dataset
 from torch_geometric.loader import DataLoader
 
@@ -123,27 +124,27 @@ class PoseAffinityDataset(Dataset):
 @dataclass(frozen=True)
 class PoseDataBundle:
     df: pd.DataFrame
-    datasets: dict[str, PoseAffinityDataset]
+    datasets: dict[str, Subset]
     data_loaders: dict[str, DataLoader]
 
 
 def build_pyg_pose_data(config: ExperimentConfig) -> PoseDataBundle:
     """Build split datasets and streaming PyG dataloaders."""
     df = build_pose_training_df(config)
+    dataset = PoseAffinityDataset(df, config.paths.pose_lmdb_dir)
     datasets = {}
     data_loaders = {}
 
     for split in ("train", "val", "test"):
-        split_df = df[df["split"] == split].copy()
-        if split_df.empty:
+        split_indices = df.index[df["split"] == split].tolist()
+        if not split_indices:
             continue
 
-        dataset = PoseAffinityDataset(split_df, config.paths.pose_lmdb_dir)
-        datasets[split] = dataset
+        datasets[split] = Subset(dataset, split_indices)
         data_loaders[split] = DataLoader(
-            dataset,
+            datasets[split],
             batch_size=config.training.batch_size,
-            shuffle=(split == "train"),
+            # shuffle=(split == "train"),
             num_workers=config.training.num_workers,
         )
 
