@@ -1,5 +1,0 @@
-split: val
-num_examples: 138
-pearson_r: 0.2192544495547846
-slope: -0.10307582262262767
-intercept: 6.0235429296898335

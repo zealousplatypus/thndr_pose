@@ -20,3 +20,4 @@ runs/*/predictions_train.csv
 runs/*/predictions_val.csv
 runs/*/predictions_all.csv
 runs/*/predictions_all.csv
+runs/

@@ -1,5 +1,0 @@
-split: test
-num_examples: 11
-pearson_r: 0.5274016760741994
-rmse: 1.8119435154138284
-mae: 1.4951223344746831

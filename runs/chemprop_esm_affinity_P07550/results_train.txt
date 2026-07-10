@@ -1,5 +1,0 @@
-split: train
-num_examples: 203
-pearson_r: 0.12227222871391213
-rmse: 1.7864178102640973
-mae: 1.5382440652228688
